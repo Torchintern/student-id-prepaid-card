@@ -1,22 +1,20 @@
 # Student ID Prepaid Card System
 
-A cross-platform application where a college student ID card functions
-as both an identification card and a prepaid digital wallet.
+A cross-platform application built using Flutter and Flask where
+a college ID card works as a prepaid wallet with rewards, tiers,
+split payments, and challenges.
 
-Students can make payments, split expenses with friends, earn rewards,
-unlock tiers, and receive freebies through weekly and monthly challenges.
-
----
-
-## 🚀 Tech Stack
-
-### Frontend
+## Tech Stack
 - Flutter (Android + Web)
+- Flask (Backend)
+- MySQL (Database)
 
-### Backend
-- Python (Flask)
-- REST APIs
-- JWT Authentication
+## Features
+- OTP-based login & registration
+- QR-based payments
+- Split payments
+- Rewards & tier system
+
 
 ### Database
 - MySQL
