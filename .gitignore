@@ -1,0 +1,21 @@
+# =====================
+# Flutter
+# =====================
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# =====================
+# Python / Flask
+# =====================
+__pycache__/
+venv/
+*.pyc
+.env
+
+# =====================
+# OS files
+# =====================
+.DS_Store
+Thumbs.db
