@@ -1,33 +1,25 @@
 import 'package:flutter/material.dart';
-import 'screens/login_mobile.dart';
-import 'screens/register_mobile.dart';
-import 'screens/dashboard.dart';
-
+import 'package:google_fonts/google_fonts.dart';
+import 'screens/login_screen.dart';
 
 void main() {
-  runApp(StudentIDApp());
+  runApp(const StudentCardSystem());
 }
 
-class StudentIDApp extends StatelessWidget {
+class StudentCardSystem extends StatelessWidget {
+  const StudentCardSystem({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Student ID Prepaid Card',
+      title: 'Student ID Card System',
       theme: ThemeData(
         primarySwatch: Colors.blue,
+        useMaterial3: true,
+        textTheme: GoogleFonts.poppinsTextTheme(),
       ),
-
-      // Initial screen
-      initialRoute: '/',
-
-      // App routes
-      routes: {
-  '/': (context) => LoginMobile(),
-  '/register': (context) => RegisterMobile(),
-  '/dashboard': (context) => DashboardPage(),
-},
-
+      debugShowCheckedModeBanner: false,
+      home: const LoginScreen(),
     );
   }
 }
