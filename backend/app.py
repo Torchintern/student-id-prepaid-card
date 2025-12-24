@@ -2,138 +2,140 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from db import get_db
 from otp_service import send_otp, verify_otp
+import re
 
 app = Flask(__name__)
 CORS(app)
 
-# HEALTH CHECK
+GSTIN_REGEX = r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9]Z[A-Z0-9]$'
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"status": "Backend running"}), 200
-# SEND OTP FOR LOGIN
-# (Checks registration for student/merchant)
 
+
+# ================= SEND OTP (LOGIN) =================
 @app.route("/send-otp", methods=["POST"])
 def send_otp_login():
     data = request.json
     mobile = data.get("mobile")
     role = data.get("role")
 
-    if not mobile or len(mobile) != 10:
-        return jsonify({"message": "Invalid mobile number"}), 400
+    if not mobile or not re.fullmatch(r"\d{10}", mobile):
+        return jsonify({"message": "Enter valid 10-digit mobile number"}), 400
 
     db = get_db()
     cur = db.cursor(dictionary=True)
 
-    if role == "student":
-        cur.execute("SELECT id FROM students WHERE mobile=%s", (mobile,))
-        if not cur.fetchone():
-            return jsonify({"message": "Student not registered"}), 403
+    table = {
+        "student": "students",
+        "merchant": "merchants",
+        "admin": "admins"
+    }.get(role)
 
-    elif role == "merchant":
-        cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
-        if not cur.fetchone():
-            return jsonify({"message": "Merchant not registered"}), 403
+    if not table:
+        return jsonify({"message": "Invalid role"}), 400
 
-    # Admin → no registration check
+    cur.execute(f"SELECT id FROM {table} WHERE mobile=%s", (mobile,))
+    if not cur.fetchone():
+        return jsonify({"message": "Mobile number not registered"}), 403
+
     send_otp(mobile)
     return jsonify({"message": "OTP sent"}), 200
 
-# SEND OTP FOR REGISTRATION
+
+# ================= SEND OTP (REGISTRATION) =================
 @app.route("/send-otp-register", methods=["POST"])
 def send_otp_register():
-    data = request.json
-    mobile = data.get("mobile")
+    mobile = request.json.get("mobile")
 
-    if not mobile or len(mobile) != 10:
-        return jsonify({"message": "Invalid mobile number"}), 400
+    if not mobile or not re.fullmatch(r"\d{10}", mobile):
+        return jsonify({"message": "Enter valid 10-digit mobile number"}), 400
 
     send_otp(mobile)
-    return jsonify({"message": "OTP sent for registration"}), 200
+    return jsonify({"message": "OTP sent"}), 200
 
-# VERIFY OTP
 
+# ================= VERIFY OTP =================
 @app.route("/verify-otp", methods=["POST"])
 def verify_otp_api():
     data = request.json
-    mobile = data.get("mobile")
-    otp = data.get("otp")
-
-    if verify_otp(mobile, otp):
+    if verify_otp(data.get("mobile"), data.get("otp")):
         return jsonify({"message": "OTP verified"}), 200
-
     return jsonify({"message": "Invalid OTP"}), 400
 
 
-
-# STUDENT REGISTRATION
+# ================= STUDENT REGISTRATION =================
 @app.route("/register/student", methods=["POST"])
 def register_student():
     data = request.json
-    name = data.get("name")
-    college_id = data.get("college_id")
     mobile = data.get("mobile")
-
-    if not name or not mobile:
-        return jsonify({"message": "Missing required fields"}), 400
 
     db = get_db()
     cur = db.cursor(dictionary=True)
 
     cur.execute("SELECT id FROM students WHERE mobile=%s", (mobile,))
     if cur.fetchone():
-        return jsonify({"message": "Student already registered"}), 409
+        return jsonify({"message": "Mobile already registered as Student"}), 409
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    if cur.fetchone():
+        return jsonify({"message": "Mobile already registered as Merchant"}), 409
 
     cur.execute(
         "INSERT INTO students (name, college_id, mobile) VALUES (%s,%s,%s)",
-        (name, college_id, mobile),
+        (data.get("name"), data.get("college_id"), mobile)
     )
     db.commit()
 
     return jsonify({"message": "Student registered successfully"}), 200
 
 
-
-# MERCHANT REGISTRATION
+# ================= MERCHANT REGISTRATION =================
 @app.route("/register/merchant", methods=["POST"])
 def register_merchant():
     data = request.json
-    merchant_name = data.get("merchant_name")
-    company_name = data.get("company_name")
-    tax_id = data.get("tax_id")
     mobile = data.get("mobile")
+    gstin = data.get("gstin")
 
-    if not merchant_name or not company_name or not tax_id or not mobile:
-        return jsonify({"message": "Missing required fields"}), 400
+    if not re.fullmatch(GSTIN_REGEX, gstin):
+        return jsonify({
+            "message": "Invalid GSTIN format. Example: 22AAAAA0000A1Z5"
+        }), 400
 
     db = get_db()
     cur = db.cursor(dictionary=True)
 
     cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
     if cur.fetchone():
-        return jsonify({"message": "Merchant already registered"}), 409
+        return jsonify({"message": "Mobile already registered as Merchant"}), 409
+
+    cur.execute("SELECT id FROM students WHERE mobile=%s", (mobile,))
+    if cur.fetchone():
+        return jsonify({"message": "Mobile already registered as Student"}), 409
 
     cur.execute(
-        """
-        INSERT INTO merchants (merchant_name, company_name, tax_id, mobile)
-        VALUES (%s,%s,%s,%s)
-        """,
-        (merchant_name, company_name, tax_id, mobile),
+        """INSERT INTO merchants
+        (merchant_name, company_name, gstin, mobile)
+        VALUES (%s,%s,%s,%s)""",
+        (
+            data.get("merchant_name"),
+            data.get("company_name"),
+            gstin,
+            mobile
+        )
     )
     db.commit()
 
     return jsonify({"message": "Merchant registered successfully"}), 200
 
-# LOGIN
+
+# ================= LOGIN =================
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
-    mobile = data.get("mobile")
-    otp = data.get("otp")
-
-    if not verify_otp(mobile, otp):
+    if not verify_otp(data.get("mobile"), data.get("otp")):
         return jsonify({"message": "Invalid OTP"}), 400
-
     return jsonify({"message": "Login success"}), 200
 
 

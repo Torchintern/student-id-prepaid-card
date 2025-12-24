@@ -19,8 +19,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _otpSent = false;
 
-  //SEND OTP
+  bool _isValidMobile(String mobile) {
+    return RegExp(r'^\d{10}$').hasMatch(mobile);
+  }
+
+  // ================= SEND OTP =================
   void _sendOtp() async {
+    if (!_isValidMobile(_phoneController.text)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter valid 10-digit mobile number')),
+      );
+      return;
+    }
+
     final response = await ApiService.sendOtpLogin(
       _phoneController.text,
       _role.name,
@@ -28,18 +39,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!response['success']) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(response['body']['message'])),
+        SnackBar(content: Text(response['message'])),
       );
       return;
     }
 
     setState(() => _otpSent = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('OTP sent')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('OTP sent')));
   }
 
-  // LOGIN
+  // ================= LOGIN =================
   void _login() async {
     final success = await ApiService.login(
       _phoneController.text,
@@ -52,10 +62,6 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       return;
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Login successful')),
-    );
 
     Navigator.pushReplacement(
       context,
@@ -75,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('PAY - X')),
+      appBar: AppBar(title: const Text('Login')),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -83,10 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             Text(
               '${_role.name} Login',
-              style: const TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
             ),
 
             const SizedBox(height: 16),
