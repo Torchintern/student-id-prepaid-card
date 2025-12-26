@@ -7,7 +7,9 @@ import re
 app = Flask(__name__)
 CORS(app)
 
-GSTIN_REGEX = r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9]Z[A-Z0-9]$'
+EMAIL_REGEX = r'^[\w\.-]+@[\w\.-]+\.\w+$'
+MOBILE_REGEX = r'^\d{10}$'
+
 
 @app.route("/", methods=["GET"])
 def health():
@@ -21,11 +23,8 @@ def send_otp_login():
     mobile = data.get("mobile")
     role = data.get("role")
 
-    if not mobile or not re.fullmatch(r"\d{10}", mobile):
+    if not re.match(MOBILE_REGEX, mobile):
         return jsonify({"message": "Enter valid 10-digit mobile number"}), 400
-
-    db = get_db()
-    cur = db.cursor(dictionary=True)
 
     table = {
         "student": "students",
@@ -36,6 +35,8 @@ def send_otp_login():
     if not table:
         return jsonify({"message": "Invalid role"}), 400
 
+    db = get_db()
+    cur = db.cursor(dictionary=True)
     cur.execute(f"SELECT id FROM {table} WHERE mobile=%s", (mobile,))
     if not cur.fetchone():
         return jsonify({"message": "Mobile number not registered"}), 403
@@ -44,12 +45,12 @@ def send_otp_login():
     return jsonify({"message": "OTP sent"}), 200
 
 
-# ================= SEND OTP (REGISTRATION) =================
+# ================= SEND OTP (REGISTER) =================
 @app.route("/send-otp-register", methods=["POST"])
 def send_otp_register():
     mobile = request.json.get("mobile")
 
-    if not mobile or not re.fullmatch(r"\d{10}", mobile):
+    if not re.match(MOBILE_REGEX, mobile):
         return jsonify({"message": "Enter valid 10-digit mobile number"}), 400
 
     send_otp(mobile)
@@ -69,7 +70,12 @@ def verify_otp_api():
 @app.route("/register/student", methods=["POST"])
 def register_student():
     data = request.json
+    name = data.get("name")
+    email = data.get("email")
     mobile = data.get("mobile")
+
+    if not name or not re.match(EMAIL_REGEX, email):
+        return jsonify({"message": "Invalid name or email"}), 400
 
     db = get_db()
     cur = db.cursor(dictionary=True)
@@ -83,8 +89,8 @@ def register_student():
         return jsonify({"message": "Mobile already registered as Merchant"}), 409
 
     cur.execute(
-        "INSERT INTO students (name, college_id, mobile) VALUES (%s,%s,%s)",
-        (data.get("name"), data.get("college_id"), mobile)
+        "INSERT INTO students (name, email, mobile) VALUES (%s,%s,%s)",
+        (name, email, mobile)
     )
     db.commit()
 
@@ -95,13 +101,13 @@ def register_student():
 @app.route("/register/merchant", methods=["POST"])
 def register_merchant():
     data = request.json
+    merchant = data.get("merchant_name")
+    company = data.get("company_name")
+    business_type = data.get("business_type")
     mobile = data.get("mobile")
-    gstin = data.get("gstin")
 
-    if not re.fullmatch(GSTIN_REGEX, gstin):
-        return jsonify({
-            "message": "Invalid GSTIN format. Example: 22AAAAA0000A1Z5"
-        }), 400
+    if not all([merchant, company, business_type]):
+        return jsonify({"message": "All merchant fields are required"}), 400
 
     db = get_db()
     cur = db.cursor(dictionary=True)
@@ -116,14 +122,9 @@ def register_merchant():
 
     cur.execute(
         """INSERT INTO merchants
-        (merchant_name, company_name, gstin, mobile)
+        (merchant_name, company_name, business_type, mobile)
         VALUES (%s,%s,%s,%s)""",
-        (
-            data.get("merchant_name"),
-            data.get("company_name"),
-            gstin,
-            mobile
-        )
+        (merchant, company, business_type, mobile)
     )
     db.commit()
 

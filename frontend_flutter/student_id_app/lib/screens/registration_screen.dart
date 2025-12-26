@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../models/user_role.dart';
 import '../services/api_service.dart';
 
@@ -13,51 +12,53 @@ class RegistrationScreen extends StatefulWidget {
 
 class _RegistrationScreenState extends State<RegistrationScreen> {
   final _name = TextEditingController();
-  final _college = TextEditingController();
+  final _email = TextEditingController();
   final _company = TextEditingController();
-  final _gstin = TextEditingController();
-  final _phone = TextEditingController();
+  final _mobile = TextEditingController();
   final _otp = TextEditingController();
+
+  String? _businessType;
 
   bool _otpSent = false;
   bool _verified = false;
   String? _otpMobile;
 
-  bool _isValidMobile(String mobile) =>
-      RegExp(r'^\d{10}$').hasMatch(mobile);
+  final List<String> businessTypes = [
+    'Sole Proprietor',
+    'Partnership',
+    'Private Limited',
+    'Public Limited',
+    'LLP',
+    'Other',
+  ];
 
-  bool _isValidGSTIN(String gstin) {
-    return RegExp(
-      r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9]Z[A-Z0-9]$',
-    ).hasMatch(gstin);
-  }
+  bool _isValidMobile(String m) =>
+      RegExp(r'^\d{10}$').hasMatch(m);
+
+  bool _isValidEmail(String e) =>
+      RegExp(r'^[\w\.-]+@[\w\.-]+\.\w+$').hasMatch(e);
 
   // ================= SEND OTP =================
   void _sendOtp() async {
-    if (!_isValidMobile(_phone.text)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter valid 10-digit mobile number')),
-      );
+    if (!_isValidMobile(_mobile.text)) {
+      _show('Enter valid 10-digit mobile number');
       return;
     }
 
-    await ApiService.sendOtpRegister(_phone.text);
+    await ApiService.sendOtpRegister(_mobile.text);
     setState(() {
       _otpSent = true;
       _verified = false;
-      _otpMobile = _phone.text;
+      _otpMobile = _mobile.text;
     });
 
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('OTP sent')));
+    _show('OTP sent');
   }
 
   // ================= VERIFY OTP =================
   void _verifyOtp() async {
-    if (_phone.text != _otpMobile) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Mobile number changed. Re-send OTP')),
-      );
+    if (_mobile.text != _otpMobile) {
+      _show('Mobile number changed. Re-send OTP');
       setState(() {
         _otpSent = false;
         _verified = false;
@@ -65,48 +66,39 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       return;
     }
 
-    final success =
-        await ApiService.verifyOtp(_phone.text, _otp.text);
+    final success = await ApiService.verifyOtp(
+      _mobile.text,
+      _otp.text,
+    );
 
     if (success) {
       setState(() => _verified = true);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Mobile verified')));
+      _show('Mobile verified');
     } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Invalid OTP')));
+      _show('Invalid OTP');
     }
   }
 
   // ================= REGISTER =================
   void _register() async {
     if (!_verified) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verify mobile number first')),
-      );
+      _show('Verify mobile number first');
       return;
     }
 
     if (_name.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Name is required')));
+      _show('Name is required');
       return;
     }
 
-    if (widget.userRole == UserRole.merchant) {
-      if (_company.text.trim().isEmpty || _gstin.text.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('All merchant details are required')),
-        );
+    if (widget.userRole == UserRole.student) {
+      if (!_isValidEmail(_email.text)) {
+        _show('Enter valid email');
         return;
       }
-
-      if (!_isValidGSTIN(_gstin.text)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid GSTIN format. Example: 22AAAAA0000A1Z5'),
-          ),
-        );
+    } else {
+      if (_company.text.isEmpty || _businessType == null) {
+        _show('All merchant details are required');
         return;
       }
     }
@@ -114,26 +106,28 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     final res = widget.userRole == UserRole.student
         ? await ApiService.registerStudent(
             _name.text,
-            _college.text.isEmpty ? null : _college.text,
-            _phone.text,
+            _email.text,
+            _mobile.text,
           )
         : await ApiService.registerMerchant(
             _name.text,
             _company.text,
-            _gstin.text,
-            _phone.text,
+            _businessType!,
+            _mobile.text,
           );
 
     if (!res['success']) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(res['message'])));
+      _show(res['message']);
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Registration successful')),
-    );
+    _show('Registration successful');
     Navigator.pop(context);
+  }
+
+  void _show(String msg) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -141,7 +135,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     final isStudent = widget.userRole == UserRole.student;
 
     return Scaffold(
-      appBar: AppBar(title: Text('${widget.userRole.name} Registration')),
+      appBar: AppBar(
+        title: Text('${widget.userRole.name} Registration'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: SingleChildScrollView(
@@ -149,9 +145,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
             children: [
               TextField(
                 controller: _name,
-                decoration: InputDecoration(
-                  labelText: isStudent ? 'Full Name' : 'Merchant Name',
-                  border: const OutlineInputBorder(),
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
                 ),
               ),
 
@@ -159,9 +155,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: TextField(
-                    controller: _college,
+                    controller: _email,
                     decoration: const InputDecoration(
-                      labelText: 'College ID (Optional)',
+                      labelText: 'Email',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -182,19 +178,20 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               if (!isStudent)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
-                  child: TextField(
-                    controller: _gstin,
-                    textCapitalization: TextCapitalization.characters,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                        RegExp(r'[A-Za-z0-9]'),
-                      ),
-                      UpperCaseTextFormatter(),
-                    ],
-                    maxLength: 15,
+                  child: DropdownButtonFormField<String>(
+                    value: _businessType,
+                    items: businessTypes
+                        .map(
+                          (e) => DropdownMenuItem(
+                            value: e,
+                            child: Text(e),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) =>
+                        setState(() => _businessType = v),
                     decoration: const InputDecoration(
-                      labelText: 'GSTIN',
-                      counterText: '',
+                      labelText: 'Business Type',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -203,7 +200,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               const SizedBox(height: 12),
 
               TextField(
-                controller: _phone,
+                controller: _mobile,
                 keyboardType: TextInputType.phone,
                 maxLength: 10,
                 decoration: const InputDecoration(
@@ -233,11 +230,9 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _otp,
-                  maxLength: 6,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'OTP',
-                    counterText: '',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -263,13 +258,5 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         ),
       ),
     );
-  }
-}
-
-class UpperCaseTextFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-      TextEditingValue oldValue, TextEditingValue newValue) {
-    return newValue.copyWith(text: newValue.text.toUpperCase());
   }
 }

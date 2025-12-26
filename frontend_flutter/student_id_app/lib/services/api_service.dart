@@ -11,10 +11,9 @@ class ApiService {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'mobile': mobile, 'role': role}),
     );
-
     return {
       'success': res.statusCode == 200,
-      'message': jsonDecode(res.body)['message'],
+      'message': jsonDecode(res.body)['message']
     };
   }
 
@@ -37,37 +36,37 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> registerStudent(
-      String name, String? college, String mobile) async {
+      String name, String email, String mobile) async {
     final res = await http.post(
       Uri.parse('$baseUrl/register/student'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'name': name,
-        'college_id': college,
+        'email': email,
         'mobile': mobile,
       }),
     );
     return {
       'success': res.statusCode == 200,
-      'message': jsonDecode(res.body)['message'],
+      'message': jsonDecode(res.body)['message']
     };
   }
 
   static Future<Map<String, dynamic>> registerMerchant(
-      String name, String company, String gstin, String mobile) async {
+      String name, String company, String businessType, String mobile) async {
     final res = await http.post(
       Uri.parse('$baseUrl/register/merchant'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'merchant_name': name,
         'company_name': company,
-        'gstin': gstin,
+        'business_type': businessType,
         'mobile': mobile,
       }),
     );
     return {
       'success': res.statusCode == 200,
-      'message': jsonDecode(res.body)['message'],
+      'message': jsonDecode(res.body)['message']
     };
   }
 
