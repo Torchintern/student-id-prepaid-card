@@ -1,26 +1,37 @@
-name: student_id_system
-description: Student, Merchant and Admin OTP based login system
-publish_to: "none"
+name: student_id_prepaid_card
+description: Student ID based prepaid card system with merchant and admin modules
+publish_to: 'none'
 
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.1.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
+  # UI & Material
   cupertino_icons: ^1.0.6
 
-  # HTTP for Flask backend connection
+  # HTTP & Backend
   http: ^1.2.0
+
+  # QR Generation & Scanning
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^3.5.6
+
+  # Charts & Business Insights
+  fl_chart: ^0.68.0
+
+  # State & Utilities
+  intl: ^0.19.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
 
-  flutter_lints: ^3.0.0
+  flutter_lints: ^3.0.1
 
 flutter:
   uses-material-design: true

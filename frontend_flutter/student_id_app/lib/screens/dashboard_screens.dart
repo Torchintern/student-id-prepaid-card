@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 import 'login_screen.dart';
+import '../services/api_service.dart';
+
 import 'merchant/all_payments_screen.dart';
 import 'merchant/qr_code_screen.dart';
 import 'merchant/loans_screen.dart';
 import 'merchant/business_insights_screen.dart';
 import 'merchant/soundpod_screen.dart';
 import 'merchant/support_screen.dart';
+
 import 'admin/student_management_screen.dart';
 import 'admin/merchant_management_screen.dart';
 import 'admin/reward_rules_screen.dart';
 import 'admin/reports_analytics_screen.dart';
-
 
 /// ================= STUDENT DASHBOARD =================
 class StudentDashboard extends StatelessWidget {
@@ -65,11 +67,13 @@ class StudentDashboard extends StatelessWidget {
 class MerchantDashboard extends StatefulWidget {
   final String merchantName;
   final String companyName;
+  final String mobile;
 
   const MerchantDashboard({
     super.key,
     required this.merchantName,
     required this.companyName,
+    required this.mobile,
   });
 
   @override
@@ -88,6 +92,143 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,
+    );
+  }
+
+  /// ================= CHANGE PIN (OTP BASED) =================
+  void _showChangePinFlow(BuildContext context) {
+    final mobileController =
+        TextEditingController(text: widget.mobile);
+    final otpController = TextEditingController();
+    final pinController = TextEditingController();
+
+    bool otpSent = false;
+    bool otpVerified = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setSheetState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Change PIN',
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+
+                TextField(
+                  controller: mobileController,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Registered Mobile Number',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                if (!otpSent)
+                  ElevatedButton(
+                    onPressed: () async {
+                      final ok = await ApiService.sendOtpRegister(
+                          widget.mobile);
+                      if (ok) {
+                        setSheetState(() => otpSent = true);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('OTP sent')),
+                        );
+                      }
+                    },
+                    child: const Text('SEND OTP'),
+                  ),
+
+                if (otpSent && !otpVerified) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: otpController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Enter OTP',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final ok = await ApiService.verifyOtp(
+                        widget.mobile,
+                        otpController.text.trim(),
+                      );
+                      if (ok) {
+                        setSheetState(() => otpVerified = true);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('OTP verified')),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Invalid OTP')),
+                        );
+                      }
+                    },
+                    child: const Text('VERIFY OTP'),
+                  ),
+                ],
+
+                if (otpVerified) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: pinController,
+                    maxLength: 4,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'New 4-digit PIN',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final res =
+                          await ApiService.changeMerchantPin(
+                        mobile: widget.mobile,
+                        otp: otpController.text.trim(),
+                        newPin: pinController.text.trim(),
+                      );
+
+                      if (res['success']) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('PIN updated successfully')),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(res['message'])),
+                        );
+                      }
+                    },
+                    child: const Text('SAVE PIN'),
+                  ),
+                ],
+              ],
+            ),
+          );
+        });
+      },
     );
   }
 
@@ -169,6 +310,18 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
           Card(
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            child: ListTile(
+              leading: const Icon(Icons.lock),
+              title: const Text('Change PIN'),
+              subtitle: const Text('OTP verification required'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () => _showChangePinFlow(context),
+            ),
+          ),
+
+          Card(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             child: const ListTile(
               leading: Icon(Icons.account_balance),
               title: Text('Bank Account'),
@@ -176,9 +329,7 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
               trailing: Icon(Icons.arrow_forward_ios, size: 16),
             ),
           ),
-
           const Spacer(),
-
           ElevatedButton.icon(
             icon: const Icon(Icons.logout),
             label: const Text('Logout'),
@@ -202,7 +353,7 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
           child: Icon(Icons.store, color: Colors.white),
         ),
         title: Text(
-          widget.merchantName,
+          'Welcome ${widget.merchantName}',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text(widget.companyName),
@@ -211,33 +362,46 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
   }
 
   Widget _todaySalesCard() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Colors.green, Colors.greenAccent],
-        ),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          Text("Today's Collection", style: TextStyle(color: Colors.white70)),
-          SizedBox(height: 6),
-          Text(
-            "₹2,580",
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+  return FutureBuilder<Map<String, dynamic>>(
+    future: ApiService.getMerchantDailySummary(widget.mobile),
+    builder: (context, snapshot) {
+      final total = snapshot.data?['total'] ?? 0;
+      final count = snapshot.data?['count'] ?? 0;
+
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Colors.green, Colors.greenAccent],
           ),
-          SizedBox(height: 4),
-          Text("14 Transactions", style: TextStyle(color: Colors.white70)),
-        ],
-      ),
-    );
-  }
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Today's Collection",
+                style: TextStyle(color: Colors.white70)),
+            const SizedBox(height: 6),
+            Text(
+              "₹$total",
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              "$count Transactions",
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 
   Widget _quickActions() {
     final actions = [
@@ -269,16 +433,24 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
 
         switch (label) {
           case 'All Payments':
-            screen = const AllPaymentsScreen();
+            screen = AllPaymentsScreen(
+              merchantMobile: widget.mobile,
+            );
             break;
           case 'QR Code':
-            screen = const QRCodeScreen();
+            screen = QRCodeScreen(
+              merchantMobile: widget.mobile,
+              merchantName: widget.merchantName,
+            );
             break;
           case 'Loans':
             screen = const LoansScreen();
             break;
           case 'Business Insights':
-            screen = const BusinessInsightsScreen();
+            screen = BusinessInsightsScreen(
+  merchantMobile: widget.mobile,
+);
+
             break;
           case 'SoundPod':
             screen = const SoundPodScreen();

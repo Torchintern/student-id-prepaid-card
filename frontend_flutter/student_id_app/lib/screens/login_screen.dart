@@ -14,7 +14,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   UserRole _role = UserRole.student;
 
-  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _mobileController = TextEditingController();
   final TextEditingController _otpController = TextEditingController();
 
   bool _otpSent = false;
@@ -25,7 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ================= SEND OTP =================
   void _sendOtp() async {
-    if (!_isValidMobile(_phoneController.text)) {
+    if (!_isValidMobile(_mobileController.text)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter valid 10-digit mobile number')),
       );
@@ -33,7 +33,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     final response = await ApiService.sendOtpLogin(
-      _phoneController.text,
+      _mobileController.text,
       _role.name,
     );
 
@@ -52,7 +52,7 @@ class _LoginScreenState extends State<LoginScreen> {
   // ================= LOGIN =================
   void _login() async {
     final success = await ApiService.login(
-      _phoneController.text,
+      _mobileController.text,
       _otpController.text,
     );
 
@@ -63,17 +63,38 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    // ---------- MERCHANT ----------
+    if (_role == UserRole.merchant) {
+      final profile =
+          await ApiService.getMerchantProfile(_mobileController.text);
+
+      if (profile == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to fetch merchant profile')),
+        );
+        return;
+      }
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MerchantDashboard(
+  merchantName: profile['merchant_name'],
+  companyName: profile['company_name'],
+  mobile: _mobileController.text,
+)
+        ),
+      );
+      return;
+    }
+
+    // ---------- STUDENT / ADMIN ----------
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => _role == UserRole.student
             ? const StudentDashboard()
-            : _role == UserRole.merchant
-                ? const MerchantDashboard(
-                    merchantName: 'Merchant',
-                    companyName: 'Company',
-                  )
-                : const AdminDashboard(),
+            : const AdminDashboard(),
       ),
     );
   }
@@ -89,7 +110,10 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             Text(
               '${_role.name} Login',
-              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+              ),
             ),
 
             const SizedBox(height: 16),
@@ -104,7 +128,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 setState(() {
                   _role = UserRole.values[index];
                   _otpSent = false;
-                  _phoneController.clear();
+                  _mobileController.clear();
                   _otpController.clear();
                 });
               },
@@ -118,7 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 24),
 
             TextField(
-              controller: _phoneController,
+              controller: _mobileController,
               keyboardType: TextInputType.phone,
               maxLength: 10,
               decoration: const InputDecoration(
