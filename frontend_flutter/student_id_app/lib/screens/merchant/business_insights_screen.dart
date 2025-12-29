@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../services/api_service.dart';
-import 'all_payments_screen.dart';
 
-enum GraphType { bar, pie }
+enum GraphType { bar, line, pie }
 
 class BusinessInsightsScreen extends StatefulWidget {
   final String merchantMobile;
@@ -24,71 +23,102 @@ class _BusinessInsightsScreenState extends State<BusinessInsightsScreen>
 
   GraphType _graphType = GraphType.bar;
   bool _loading = true;
-  bool _mounted = true;
 
-  late Map<String, double> _todayData;
-  late Map<String, double> _monthlyData;
+  // Backend data
+  Map<String, double> todayData = {};
+  Map<String, double> monthData = {};
+  double todayGrowth = 0;
+  double monthGrowth = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _todayData = {};
-    _monthlyData = {};
-    _loadData();
+    _loadInsights();
   }
 
-  @override
-  void dispose() {
-    _mounted = false;
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadData() async {
-    final txns =
-        await ApiService.getMerchantTransactions(widget.merchantMobile);
-
-    if (!_mounted) return;
-
-    final today = DateTime.now();
-
-    double morning = 0, afternoon = 0, evening = 0;
-    final Map<String, double> monthly = {};
-
-    for (final t in txns) {
-      if (t['type'] != 'CREDIT' || t['status'] != 'SUCCESS') continue;
-
-      final dt = DateTime.parse(t['created_at']);
-      final amount = double.parse(t['amount'].toString());
-
-      if (dt.year == today.year &&
-          dt.month == today.month &&
-          dt.day == today.day) {
-        if (dt.hour >= 6 && dt.hour < 12) {
-          morning += amount;
-        } else if (dt.hour >= 12 && dt.hour < 18) {
-          afternoon += amount;
-        } else {
-          evening += amount;
-        }
-      }
-
-      final key = '${dt.day}/${dt.month}';
-      monthly[key] = (monthly[key] ?? 0) + amount;
-    }
-
-    if (!_mounted) return;
+  Future<void> _loadInsights() async {
+    final todayRes =
+        await ApiService.getTodayInsights(widget.merchantMobile);
+    final monthRes =
+        await ApiService.getMonthlyInsights(widget.merchantMobile);
 
     setState(() {
-      _todayData = {
-        'Morning': morning,
-        'Afternoon': afternoon,
-        'Evening': evening,
-      };
-      _monthlyData = monthly;
+      todayData =
+          Map<String, double>.from(todayRes['data']);
+      todayGrowth = todayRes['growth'].toDouble();
+
+      monthData =
+          Map<String, double>.from(monthRes['data']);
+      monthGrowth = monthRes['growth'].toDouble();
+
       _loading = false;
     });
+  }
+
+  // ================= GRAPH BUILDER =================
+  Widget _buildGraph(Map<String, double> data) {
+    if (data.isEmpty) {
+      return const Center(child: Text('No data'));
+    }
+
+    switch (_graphType) {
+      case GraphType.line:
+        return LineChart(
+          LineChartData(
+            lineBarsData: [
+              LineChartBarData(
+                spots: data.entries
+                    .map((e) => FlSpot(
+                          data.keys.toList().indexOf(e.key)
+                              .toDouble(),
+                          e.value,
+                        ))
+                    .toList(),
+                isCurved: true,
+                barWidth: 3,
+                color: Colors.blue,
+                dotData: FlDotData(show: false),
+              ),
+            ],
+          ),
+        );
+
+      case GraphType.pie:
+        return PieChart(
+          PieChartData(
+            sections: data.entries
+                .map(
+                  (e) => PieChartSectionData(
+                    title: e.key,
+                    value: e.value,
+                    radius: 60,
+                  ),
+                )
+                .toList(),
+          ),
+        );
+
+      case GraphType.bar:
+        return BarChart(
+          BarChartData(
+            barGroups: data.entries
+                .map(
+                  (e) => BarChartGroupData(
+                    x: data.keys.toList().indexOf(e.key),
+                    barRods: [
+                      BarChartRodData(
+                        toY: e.value,
+                        color: Colors.green,
+                        width: 18,
+                      ),
+                    ],
+                  ),
+                )
+                .toList(),
+          ),
+        );
+    }
   }
 
   Widget _graphSelector() {
@@ -96,78 +126,53 @@ class _BusinessInsightsScreenState extends State<BusinessInsightsScreen>
       value: _graphType,
       items: const [
         DropdownMenuItem(
-            value: GraphType.bar, child: Text('Bar Graph')),
+            value: GraphType.bar, child: Text('Bar')),
         DropdownMenuItem(
-            value: GraphType.pie, child: Text('Pie Chart')),
+            value: GraphType.line, child: Text('Line')),
+        DropdownMenuItem(
+            value: GraphType.pie, child: Text('Pie')),
       ],
-      onChanged: (v) {
-        if (!_mounted) return;
-        setState(() => _graphType = v!);
-      },
+      onChanged: (v) => setState(() => _graphType = v!),
     );
   }
 
-  Widget _buildGraph(Map<String, double> data) {
-    if (data.isEmpty || data.values.every((v) => v == 0)) {
-      return const Center(
-        child: Text(
-          'No collection data available',
-          style: TextStyle(fontSize: 16),
-        ),
-      );
-    }
-
-    final keys = data.keys.toList(growable: false);
-
-    if (_graphType == GraphType.bar) {
-      return BarChart(
-        BarChartData(
-          barGroups: List.generate(keys.length, (index) {
-            return BarChartGroupData(
-              x: index,
-              barRods: [
-                BarChartRodData(
-                  toY: data[keys[index]]!,
-                  color: Colors.green,
-                  width: 22,
+  Widget _growthCard(String title, double value) {
+    final bool positive = value >= 0;
+    return Card(
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(
+              positive
+                  ? Icons.trending_up
+                  : Icons.trending_down,
+              color: positive ? Colors.green : Colors.red,
+              size: 40,
+            ),
+            const SizedBox(width: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(
+                  '${positive ? '+' : ''}${value.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color:
+                        positive ? Colors.green : Colors.red,
+                  ),
                 ),
               ],
-            );
-          }),
-          titlesData: FlTitlesData(
-            leftTitles: const AxisTitles(
-                sideTitles: SideTitles(showTitles: true)),
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                getTitlesWidget: (value, _) {
-                  final i = value.toInt();
-                  if (i < 0 || i >= keys.length) {
-                    return const SizedBox();
-                  }
-                  return Text(keys[i]);
-                },
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return PieChart(
-      PieChartData(
-        sections: data.entries
-            .where((e) => e.value > 0)
-            .map(
-              (e) => PieChartSectionData(
-                value: e.value,
-                title: '₹${e.value.toInt()}',
-                radius: 60,
-                titleStyle: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.bold),
-              ),
             )
-            .toList(growable: false),
+          ],
+        ),
       ),
     );
   }
@@ -196,19 +201,45 @@ class _BusinessInsightsScreenState extends State<BusinessInsightsScreen>
                   child: TabBarView(
                     controller: _tabController,
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: _buildGraph(_todayData),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: _buildGraph(_monthlyData),
-                      ),
+                      _todayTab(),
+                      _monthTab(),
                     ],
                   ),
                 ),
               ],
             ),
+    );
+  }
+
+  Widget _todayTab() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          SizedBox(height: 250, child: _buildGraph(todayData)),
+          const SizedBox(height: 20),
+          _growthCard(
+            'Sales growth vs Yesterday',
+            todayGrowth,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _monthTab() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          SizedBox(height: 250, child: _buildGraph(monthData)),
+          const SizedBox(height: 20),
+          _growthCard(
+            'Sales growth vs Previous Month',
+            monthGrowth,
+          ),
+        ],
+      ),
     );
   }
 }

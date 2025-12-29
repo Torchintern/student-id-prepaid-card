@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../services/api_service.dart';
+import 'qr_scanner_screen.dart'; // ✅ NEW IMPORT
 
 class QRCodeScreen extends StatefulWidget {
   final String merchantMobile;
@@ -227,24 +227,12 @@ class _QRCodeScreenState extends State<QRCodeScreen>
                 ),
                 const SizedBox(height: 12),
 
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    QrImageView(
-                      data: jsonEncode({
-                        'qr_id': _qrId,
-                        'amount': _qrAmount,
-                      }),
-                      size: 220,
-                    ),
-                    if (_qrStatus == 'SUCCESS')
-                      const Icon(Icons.check_circle,
-                          size: 90, color: Colors.green),
-                    if (_qrStatus != 'SUCCESS' &&
-                        _qrStatus != 'PENDING')
-                      const Icon(Icons.cancel,
-                          size: 90, color: Colors.red),
-                  ],
+                QrImageView(
+                  data: jsonEncode({
+                    'qr_id': _qrId,
+                    'amount': _qrAmount,
+                  }),
+                  size: 220,
                 ),
 
                 const SizedBox(height: 12),
@@ -253,6 +241,7 @@ class _QRCodeScreenState extends State<QRCodeScreen>
                   style:
                       const TextStyle(fontWeight: FontWeight.bold),
                 ),
+                
 
                 const SizedBox(height: 8),
                 Text(
@@ -285,6 +274,32 @@ class _QRCodeScreenState extends State<QRCodeScreen>
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
+          ElevatedButton.icon(
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Scan QR'),
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const QRScannerScreen(),
+                ),
+              );
+
+              if (result != null) {
+                setState(() {
+                  _payTargetController.text =
+                      result['qr_id'].toString();
+                  _payAmountController.text =
+                      result['amount'].toString();
+                  _canEnterAmount = true;
+                  _canPay = true;
+                });
+              }
+            },
+          ),
+
+          const SizedBox(height: 12),
+
           TextField(
             controller: _payTargetController,
             decoration: const InputDecoration(
@@ -366,31 +381,6 @@ class _QRCodeScreenState extends State<QRCodeScreen>
                   fontWeight: FontWeight.bold),
             ),
           ],
-
-          const Divider(height: 40),
-          SizedBox(
-            height: 220,
-            child: MobileScanner(
-              onDetect: (BarcodeCapture capture) {
-                if (capture.barcodes.isNotEmpty) {
-                  final raw =
-                      capture.barcodes.first.rawValue;
-                  if (raw != null) {
-                    final decoded = jsonDecode(raw);
-                    _payTargetController.text =
-                        decoded['qr_id'].toString();
-                    _payAmountController.text =
-                        decoded['amount'].toString();
-                    setState(() {
-                      _canEnterAmount = true;
-                      _canPay = true;
-                    });
-                    _show('QR scanned. Confirm payment.');
-                  }
-                }
-              },
-            ),
-          ),
         ],
       ),
     );

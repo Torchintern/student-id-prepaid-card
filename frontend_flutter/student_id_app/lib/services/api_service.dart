@@ -171,13 +171,35 @@ class ApiService {
     };
   }
 
-  // ================= MERCHANT TRANSACTIONS =================
+  // ================= MERCHANT TRANSACTIONS (OLD – KEEP) =================
   static Future<List<dynamic>> getMerchantTransactions(
       String mobile) async {
     final res = await http.post(
       Uri.parse('$baseUrl/merchant/transactions'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'mobile': mobile}),
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body) as List<dynamic>;
+    }
+    return [];
+  }
+
+  // ================= MERCHANT TRANSACTIONS (NEW – FILTERED) =================
+  static Future<List<dynamic>> getMerchantTransactionsFiltered({
+    required String mobile,
+    required String filter, // today / week / month / all
+    bool creditOnly = false,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/transactions/filter'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'mobile': mobile,
+        'filter': filter,
+        'creditOnly': creditOnly,
+      }),
     );
 
     if (res.statusCode == 200) {
@@ -193,6 +215,24 @@ class ApiService {
       Uri.parse('$baseUrl/merchant/daily-summary'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'mobile': mobile}),
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return {'total': 0, 'count': 0};
+  }
+
+  // ================= MERCHANT COLLECTION SUMMARY =================
+  static Future<Map<String, dynamic>> getMerchantCollectionSummary(
+      String mobile, String filter) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/collection-summary'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'mobile': mobile,
+        'filter': filter, // today / week / month
+      }),
     );
 
     if (res.statusCode == 200) {
@@ -229,7 +269,7 @@ class ApiService {
     return res.statusCode == 200;
   }
 
-  // ================= PAY QR (CUSTOMER → MERCHANT CREDIT) =================
+  // ================= PAY QR (CREDIT) =================
   static Future<Map<String, dynamic>> payQr({
     required int qrId,
     required String payerName,
@@ -250,4 +290,87 @@ class ApiService {
       'message': body['message'],
     };
   }
+
+  // ================= BUSINESS INSIGHTS (TODAY) =================
+  static Future<Map<String, dynamic>> getTodayInsights(
+      String mobile) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/insights/today'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'mobile': mobile}),
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return {'data': {}, 'growth': 0};
+  }
+
+  // ================= BUSINESS INSIGHTS (MONTHLY) =================
+  static Future<Map<String, dynamic>> getMonthlyInsights(
+      String mobile) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/insights/monthly'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'mobile': mobile}),
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return {'data': {}, 'growth': 0};
+  }
+  // ================= MERCHANT MY INFO =================
+  static Future<Map<String, dynamic>?> getMerchantMyInfo(
+      String mobile) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/my-info'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'mobile': mobile}),
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return null;
+  }
+
+  // ================= SEND OTP FOR INFO EDIT =================
+  static Future<bool> sendOtp(String mobile) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/send-otp'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'mobile': mobile}),
+    );
+    return res.statusCode == 200;
+  }
+
+  // ================= UPDATE MERCHANT INFO (EMAIL / AADHAAR) =================
+  static Future<bool> updateMerchantInfo({
+    required String mobile,
+    required String otp,
+    String? email,
+    String? aadhaar,
+  }) async {
+    final Map<String, dynamic> body = {
+      'mobile': mobile,
+      'otp': otp,
+    };
+
+    if (email != null) {
+      body['email'] = email;
+    }
+    if (aadhaar != null) {
+      body['aadhaar'] = aadhaar;
+    }
+
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/update-info'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+
+    return res.statusCode == 200;
+  }
+
 }

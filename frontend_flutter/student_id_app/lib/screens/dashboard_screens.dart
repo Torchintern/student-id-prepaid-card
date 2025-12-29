@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'login_screen.dart';
 import '../services/api_service.dart';
+import '../../models/payment_filter.dart';
+import 'merchant/merchant_my_info_screen.dart';
 
 import 'merchant/all_payments_screen.dart';
 import 'merchant/qr_code_screen.dart';
@@ -8,12 +10,12 @@ import 'merchant/loans_screen.dart';
 import 'merchant/business_insights_screen.dart';
 import 'merchant/soundpod_screen.dart';
 import 'merchant/support_screen.dart';
+import 'merchant/merchant_profile_qr_screen.dart'; // ✅ NEW IMPORT
 
 import 'admin/student_management_screen.dart';
 import 'admin/merchant_management_screen.dart';
 import 'admin/reward_rules_screen.dart';
 import 'admin/reports_analytics_screen.dart';
-
 /// ================= STUDENT DASHBOARD =================
 class StudentDashboard extends StatelessWidget {
   const StudentDashboard({super.key});
@@ -21,6 +23,7 @@ class StudentDashboard extends StatelessWidget {
   void _logout(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Logged out successfully')),
+
     );
 
     Navigator.pushAndRemoveUntil(
@@ -246,6 +249,26 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
             _currentIndex == 0 ? 'Merchant Home' : 'Merchant Profile',
             style: const TextStyle(color: Colors.black),
           ),
+          // ✅ QR ICON ONLY IN PROFILE TAB
+          actions: _currentIndex == 1
+              ? [
+                  IconButton(
+                    icon: const Icon(Icons.qr_code, color: Colors.black),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => MerchantProfileQrScreen(
+                            merchantName: widget.merchantName,
+                            companyName: widget.companyName,
+                            mobile: widget.mobile,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ]
+              : null,
         ),
         body: _currentIndex == 0 ? _homeTab() : _profileTab(context),
         bottomNavigationBar: BottomNavigationBar(
@@ -318,6 +341,26 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
               onTap: () => _showChangePinFlow(context),
             ),
           ),
+          Card(
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+  child: ListTile(
+    leading: const Icon(Icons.info_outline),
+    title: const Text('My Info'),
+    subtitle: const Text('Merchant personal & business details'),
+    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MerchantMyInfoScreen(
+            merchantMobile: widget.mobile,
+          ),
+        ),
+      );
+    },
+  ),
+),
+
 
           Card(
             shape:
@@ -362,46 +405,92 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
   }
 
   Widget _todaySalesCard() {
-  return FutureBuilder<Map<String, dynamic>>(
-    future: ApiService.getMerchantDailySummary(widget.mobile),
-    builder: (context, snapshot) {
-      final total = snapshot.data?['total'] ?? 0;
-      final count = snapshot.data?['count'] ?? 0;
-
-      return Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Colors.green, Colors.greenAccent],
-          ),
-          borderRadius: BorderRadius.circular(18),
+  return Row(
+    children: [
+      Expanded(
+        child: _collectionCard(
+          title: "Today",
+          filter: PaymentFilter.today,
+          colors: const [Colors.green, Colors.greenAccent],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Today's Collection",
-                style: TextStyle(color: Colors.white70)),
-            const SizedBox(height: 6),
-            Text(
-              "₹$total",
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              "$count Transactions",
-              style: const TextStyle(color: Colors.white70),
-            ),
-          ],
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: _collectionCard(
+          title: "Weekly",
+          filter: PaymentFilter.week,
+          colors: const [Colors.blue, Colors.lightBlueAccent],
         ),
-      );
-    },
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: _collectionCard(
+          title: "Monthly",
+          filter: PaymentFilter.month,
+          colors: const [Colors.purple, Colors.purpleAccent],
+        ),
+      ),
+    ],
   );
 }
 
+Widget _collectionCard({
+  required String title,
+  required PaymentFilter filter,
+  required List<Color> colors,
+}) {
+  return GestureDetector(
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AllPaymentsScreen(
+            merchantMobile: widget.mobile,
+            filter: filter,          
+            creditOnly: true,        
+          ),
+        ),
+      );
+    },
+    child: FutureBuilder<Map<String, dynamic>>(
+      future: ApiService.getMerchantCollectionSummary(
+        widget.mobile,
+        filter.name,
+      ),
+      builder: (context, snapshot) {
+        final total = snapshot.data?['total'] ?? 0;
+        final count = snapshot.data?['count'] ?? 0;
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: colors),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 4),
+              Text(
+                "₹$total",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              Text(
+                "$count txns",
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+}
 
   Widget _quickActions() {
     final actions = [
@@ -448,15 +537,14 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
             break;
           case 'Business Insights':
             screen = BusinessInsightsScreen(
-  merchantMobile: widget.mobile,
-);
-
+              merchantMobile: widget.mobile,
+            );
             break;
           case 'SoundPod':
             screen = const SoundPodScreen();
             break;
           default:
-            screen = const SupportScreen();
+            screen = SupportScreen();
         }
 
         Navigator.push(

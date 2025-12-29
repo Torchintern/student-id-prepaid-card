@@ -362,7 +362,6 @@ def merchant_transactions():
 
     rows = cur.fetchall()
 
-    # ✅ FINAL DISPLAY LOGIC
     for r in rows:
         if r["status"] != "SUCCESS":
             r["display"] = "FAILED"
@@ -389,17 +388,270 @@ def merchant_daily_summary():
     cur.execute(
         """
         SELECT IFNULL(SUM(amount),0) AS total, COUNT(*) AS count
-FROM transactions
-WHERE merchant_id=%s
-  AND status='SUCCESS'
-  AND type='CREDIT'
-  AND DATE(created_at)=CURDATE()
-
+        FROM transactions
+        WHERE merchant_id=%s
+          AND status='SUCCESS'
+          AND type='CREDIT'
+          AND DATE(created_at)=CURDATE()
         """,
         (merchant["id"],)
     )
 
     return jsonify(cur.fetchone()), 200
+@app.route("/merchant/transactions/filter", methods=["POST"])
+def merchant_transactions_filter():
+    data = request.json
+    mobile = data.get("mobile")
+    filter_type = data.get("filter")  # today / week / month / all
+    credit_only = data.get("creditOnly", False)
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify([]), 200
+
+    merchant_id = merchant["id"]
+
+    conditions = ["merchant_id=%s"]
+    params = [merchant_id]
+
+    # CREDIT + SUCCESS
+    if credit_only:
+        conditions.append("type='CREDIT'")
+        conditions.append("status='SUCCESS'")
+
+    # DATE FILTER
+    if filter_type == "today":
+        conditions.append("DATE(created_at)=CURDATE()")
+    elif filter_type == "week":
+        conditions.append("YEARWEEK(created_at,1)=YEARWEEK(CURDATE(),1)")
+    elif filter_type == "month":
+        conditions.append(
+            "MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())"
+        )
+
+    where_clause = " AND ".join(conditions)
+
+    query = f"""
+        SELECT payer_name, amount, type, status, created_at
+        FROM transactions
+        WHERE {where_clause}
+        ORDER BY created_at DESC
+    """
+
+    cur.execute(query, tuple(params))
+    return jsonify(cur.fetchall()), 200
+
+
+# Merchant collection
+@app.route("/merchant/collection-summary", methods=["POST"])
+def merchant_collection_summary():
+    data = request.json
+    mobile = data.get("mobile")
+    filter_type = data.get("filter")  # today / week / month
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"total": 0, "count": 0}), 200
+
+    merchant_id = merchant["id"]
+
+    date_condition = ""
+    if filter_type == "today":
+        date_condition = "DATE(created_at) = CURDATE()"
+    elif filter_type == "week":
+        date_condition = "YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)"
+    elif filter_type == "month":
+        date_condition = (
+            "MONTH(created_at)=MONTH(CURDATE()) "
+            "AND YEAR(created_at)=YEAR(CURDATE())"
+        )
+
+    query = f"""
+        SELECT
+            IFNULL(SUM(amount),0) AS total,
+            COUNT(*) AS count
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND {date_condition}
+    """
+
+    cur.execute(query, (merchant_id,))
+    result = cur.fetchone()
+
+    return jsonify({
+        "total": float(result["total"]),
+        "count": result["count"]
+    }), 200
+
+# ================= BUSINESS INSIGHTS (TODAY) =================
+@app.route("/merchant/insights/today", methods=["POST"])
+def merchant_insights_today():
+    mobile = request.json.get("mobile")
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"data": {}, "growth": 0}), 200
+
+    merchant_id = merchant["id"]
+
+    cur.execute("""
+        SELECT
+            DATE_FORMAT(grp_date,'%a') AS label,
+            total
+        FROM (
+            SELECT
+                DATE(created_at) AS grp_date,
+                SUM(amount) AS total
+            FROM transactions
+            WHERE merchant_id=%s
+              AND type='CREDIT'
+              AND status='SUCCESS'
+              AND created_at >= CURDATE() - INTERVAL 6 DAY
+            GROUP BY DATE(created_at)
+        ) t
+        ORDER BY grp_date
+    """, (merchant_id,))
+
+    data = {row["label"]: float(row["total"]) for row in cur.fetchall()}
+
+    return jsonify({"data": data, "growth": 0}), 200
+
+
+# ================= BUSINESS INSIGHTS (MONTHLY) =================
+@app.route("/merchant/insights/monthly", methods=["POST"])
+def merchant_insights_monthly():
+    mobile = request.json.get("mobile")
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"data": {}, "growth": 0}), 200
+
+    merchant_id = merchant["id"]
+
+    cur.execute("""
+        SELECT
+            DATE_FORMAT(grp_month,'%b %Y') AS label,
+            total
+        FROM (
+            SELECT
+                DATE_FORMAT(created_at,'%Y-%m-01') AS grp_month,
+                SUM(amount) AS total
+            FROM transactions
+            WHERE merchant_id=%s
+              AND type='CREDIT'
+              AND status='SUCCESS'
+              AND created_at >= DATE_SUB(CURDATE(), INTERVAL 5 MONTH)
+            GROUP BY DATE_FORMAT(created_at,'%Y-%m-01')
+        ) t
+        ORDER BY grp_month
+    """, (merchant_id,))
+
+    data = {row["label"]: float(row["total"]) for row in cur.fetchall()}
+
+    return jsonify({"data": data, "growth": 0}), 200
+
+@app.route('/merchant/my-info', methods=['POST'])
+def merchant_my_info():
+    data = request.json
+    mobile = data['mobile']
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("""
+        SELECT merchant_name, company_name, business_type,
+               mobile, email, aadhaar,
+               email_verified, aadhaar_verified,
+               allow_sensitive_edit
+        FROM merchants
+        WHERE mobile=%s
+    """, (mobile,))
+    merchant = cur.fetchone()
+    cur.close()
+
+    if not merchant:
+        return jsonify({'message': 'Merchant not found'}), 404
+
+    return jsonify(merchant), 200
+
+@app.route('/merchant/update-info', methods=['POST'])
+def update_merchant_info():
+    data = request.json
+    mobile = data.get('mobile')
+    email = data.get('email')
+    aadhaar = data.get('aadhaar')
+    otp = data.get('otp')
+
+    if not mobile or not otp:
+        return jsonify({'message': 'Mobile and OTP are required'}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # ---------------- CHECK ADMIN PERMISSION ----------------
+    cur.execute(
+        "SELECT allow_sensitive_edit FROM merchants WHERE mobile=%s",
+        (mobile,)
+    )
+    row = cur.fetchone()
+
+    if not row or row[0] != 1:
+        cur.close()
+        return jsonify({
+            'message': 'Editing not allowed. Contact admin.'
+        }), 403
+
+    # ---------------- VERIFY OTP ----------------
+    # Reuse your existing OTP verification logic
+    if not verify_otp(mobile, otp):
+        cur.close()
+        return jsonify({
+            'message': 'Invalid or expired OTP'
+        }), 401
+
+    # ---------------- UPDATE EMAIL ----------------
+    if email:
+        cur.execute("""
+            UPDATE merchants
+            SET email=%s,
+                email_verified=1,
+                allow_sensitive_edit=0
+            WHERE mobile=%s
+        """, (email, mobile))
+
+    # ---------------- UPDATE AADHAAR ----------------
+    if aadhaar:
+        cur.execute("""
+            UPDATE merchants
+            SET aadhaar=%s,
+                aadhaar_verified=1,
+                allow_sensitive_edit=0
+            WHERE mobile=%s
+        """, (aadhaar, mobile))
+
+    db.commit()
+    cur.close()
+
+    return jsonify({
+        'message': 'Information updated successfully'
+    }), 200
+
 
 
 # ================= HELPER =================
@@ -407,8 +659,8 @@ def _insert_txn(cur, merchant_id, payer_name, amount, txn_type, status):
     cur.execute(
         """
         INSERT INTO transactions
-        (merchant_id, payer_name, amount, type, status)
-        VALUES (%s,%s,%s,%s,%s)
+        (merchant_id, payer_name, amount, type, status, created_at)
+        VALUES (%s,%s,%s,%s,%s,NOW())
         """,
         (merchant_id, payer_name, amount, txn_type, status)
     )
