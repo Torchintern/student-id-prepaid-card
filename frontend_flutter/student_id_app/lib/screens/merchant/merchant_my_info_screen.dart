@@ -13,7 +13,6 @@ class MerchantMyInfoScreen extends StatefulWidget {
   State<MerchantMyInfoScreen> createState() =>
       _MerchantMyInfoScreenState();
 }
-
 class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
   Map<String, dynamic>? info;
 
@@ -24,6 +23,7 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
   bool _addingEmail = false;
   bool _addingAadhaar = false;
   bool _otpSent = false;
+  bool _verifying = false;
   bool _saving = false;
 
   @override
@@ -51,38 +51,74 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
   bool get _canAddAadhaar =>
       (info?['aadhaar'] == null || info!['aadhaar'].toString().isEmpty);
 
+  // ================= SEND OTP =================
   Future<void> _sendOtp() async {
-    await ApiService.sendOtp(widget.merchantMobile);
-    setState(() => _otpSent = true);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('OTP sent')),
+    final ok = await ApiService.sendOtp(
+      mobile: widget.merchantMobile,
+      role: "merchant",
     );
+
+    if (ok) {
+      setState(() => _otpSent = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('OTP sent successfully')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to send OTP')),
+      );
+    }
   }
 
+  // ================= VERIFY OTP =================
+  Future<bool> _verifyOtp() async {
+    setState(() => _verifying = true);
+
+    final verified = await ApiService.verifyOtpNamed(
+      mobile: widget.merchantMobile,
+      otp: _otpController.text.trim(),
+    );
+
+    setState(() => _verifying = false);
+    return verified;
+  }
+
+  // ================= SAVE INFO =================
   Future<void> _verifyAndSave() async {
-    if (_otpController.text.isEmpty) return;
+    if (_otpController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter OTP')),
+      );
+      return;
+    }
+
+    final verified = await _verifyOtp();
+    if (!verified) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid OTP')),
+      );
+      return;
+    }
 
     setState(() => _saving = true);
 
     final success = await ApiService.updateMerchantInfo(
       mobile: widget.merchantMobile,
-      otp: _otpController.text,
-      email: _addingEmail ? _emailController.text : null,
-      aadhaar: _addingAadhaar ? _aadhaarController.text : null,
+      email: _addingEmail ? _emailController.text.trim() : null,
+      aadhaar: _addingAadhaar ? _aadhaarController.text.trim() : null,
     );
 
     setState(() => _saving = false);
 
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Saved & Verified Successfully')),
+        const SnackBar(content: Text('Information updated successfully')),
       );
       _resetState();
       _loadInfo();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('OTP verification failed')),
+        const SnackBar(content: Text('Update failed')),
       );
     }
   }
@@ -114,9 +150,9 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
             _readOnly('Company Name', info!['company_name']),
             _readOnly('Business Type', info!['business_type']),
             _readOnly('Mobile Number', info!['mobile']),
-            const Divider(height: 30),
+            const Divider(height: 32),
 
-            _fieldWithAddOption(
+            _editableField(
               label: 'Email',
               controller: _emailController,
               canAdd: _canAddEmail,
@@ -131,7 +167,7 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
 
             const SizedBox(height: 16),
 
-            _fieldWithAddOption(
+            _editableField(
               label: 'Aadhaar Number',
               controller: _aadhaarController,
               canAdd: _canAddAadhaar,
@@ -147,7 +183,7 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
             ),
 
             if (_addingEmail || _addingAadhaar) ...[
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
 
               if (!_otpSent)
                 ElevatedButton(
@@ -167,8 +203,9 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton(
-                  onPressed: _saving ? null : _verifyAndSave,
-                  child: _saving
+                  onPressed:
+                      (_verifying || _saving) ? null : _verifyAndSave,
+                  child: (_verifying || _saving)
                       ? const CircularProgressIndicator()
                       : const Text('Verify & Save'),
                 ),
@@ -194,7 +231,7 @@ class _MerchantMyInfoScreenState extends State<MerchantMyInfoScreen> {
     );
   }
 
-  Widget _fieldWithAddOption({
+  Widget _editableField({
     required String label,
     required TextEditingController controller,
     required bool canAdd,

@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   static const String baseUrl = 'http://10.0.2.2:5000';
+  
 
   // ================= SEND OTP (LOGIN) =================
   static Future<Map<String, dynamic>> sendOtpLogin(
@@ -46,6 +47,14 @@ class ApiService {
     );
     return res.statusCode == 200;
   }
+// USED BY MY INFO SCREEN
+static Future<bool> verifyOtpNamed({
+  required String mobile,
+  required String otp,
+}) async {
+  return verifyOtp(mobile, otp);
+}
+
 
   // ================= LOGIN =================
   static Future<bool> login(String mobile, String otp) async {
@@ -335,42 +344,137 @@ class ApiService {
     return null;
   }
 
-  // ================= SEND OTP FOR INFO EDIT =================
-  static Future<bool> sendOtp(String mobile) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/send-otp'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'mobile': mobile}),
-    );
-    return res.statusCode == 200;
+  // ================= SEND OTP =================
+static Future<bool> sendOtp({
+  required String mobile,
+  required String role,
+}) async {
+  final response = await http.post(
+    Uri.parse('$baseUrl/send-otp'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      "mobile": mobile,
+      "role": role,
+    }),
+  );
+
+  return response.statusCode == 200;
+}
+
+// merchant info
+static Future<bool> updateMerchantInfo({
+  required String mobile,
+  String? email,
+  String? aadhaar,
+}) async {
+  final res = await http.post(
+    Uri.parse("$baseUrl/merchant/update-info"),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      "mobile": mobile,
+      if (email != null) "email": email,
+      if (aadhaar != null) "aadhaar": aadhaar,
+    }),
+  );
+
+  return res.statusCode == 200;
+}
+// ================= BANK (NEW DB-DRIVEN LOGIC) =================
+
+  /// Static list of banks
+  static Future<List<dynamic>> getBanks() async {
+    final res = await http.get(Uri.parse('$baseUrl/banks/list'));
+    return jsonDecode(res.body);
   }
 
-  // ================= UPDATE MERCHANT INFO (EMAIL / AADHAAR) =================
-  static Future<bool> updateMerchantInfo({
+  /// Check if merchant mobile is linked with selected bank
+  static Future<Map<String, dynamic>> checkBankLinked({
     required String mobile,
-    required String otp,
-    String? email,
-    String? aadhaar,
+    required String bankName,
   }) async {
-    final Map<String, dynamic> body = {
-      'mobile': mobile,
-      'otp': otp,
-    };
-
-    if (email != null) {
-      body['email'] = email;
-    }
-    if (aadhaar != null) {
-      body['aadhaar'] = aadhaar;
-    }
-
     final res = await http.post(
-      Uri.parse('$baseUrl/merchant/update-info'),
+      Uri.parse('$baseUrl/bank/check-linked'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
+      body: jsonEncode({
+        'mobile': mobile,
+        'bank_name': bankName,
+      }),
+    );
+
+    return jsonDecode(res.body);
+  }
+
+  /// Add merchant bank account (after successful check)
+  static Future<bool> addMerchantBank({
+    required String mobile,
+    required String bankName,
+    required String accountNumber,
+    required String ifscCode,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/merchant/bank/add'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'mobile': mobile,
+        'bank_name': bankName,
+        'account_number': accountNumber,
+        'ifsc_code': ifscCode,
+      }),
     );
 
     return res.statusCode == 200;
   }
+  // check any bank linked
+static Future<Map<String, dynamic>> checkAnyLinkedBank({
+  required String mobile,
+}) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/merchant/bank/check-any'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({'mobile': mobile}),
+  );
+
+  return jsonDecode(res.body);
+}
+
+// check balance 
+static Future<Map<String, dynamic>> checkMerchantBalance({
+  required String mobile,
+  required String pin,
+  required String bankName,
+}) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/merchant/bank/balance'),
+    headers: const {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      "mobile": mobile,
+      "pin": pin,
+      "bank_name": bankName, 
+    }),
+  );
+
+  return jsonDecode(res.body);
+}
+
+// ================= LIST MERCHANT BANK ACCOUNTS =================
+static Future<List<dynamic>> listMerchantBanks({
+  required String mobile,
+}) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/merchant/bank/list'),
+    headers: const {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'mobile': mobile,
+    }),
+  );
+
+  if (res.statusCode == 200) {
+    return jsonDecode(res.body) as List<dynamic>;
+  } else {
+    return [];
+  }
+}
+
+
 
 }

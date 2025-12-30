@@ -10,12 +10,15 @@ import 'merchant/loans_screen.dart';
 import 'merchant/business_insights_screen.dart';
 import 'merchant/soundpod_screen.dart';
 import 'merchant/support_screen.dart';
-import 'merchant/merchant_profile_qr_screen.dart'; // ✅ NEW IMPORT
-
+import 'merchant/merchant_profile_qr_screen.dart';
+import 'merchant/add_bank_account_screen.dart';
+import 'merchant/linked_bank_account_screen.dart';
 import 'admin/student_management_screen.dart';
 import 'admin/merchant_management_screen.dart';
 import 'admin/reward_rules_screen.dart';
 import 'admin/reports_analytics_screen.dart';
+
+
 /// ================= STUDENT DASHBOARD =================
 class StudentDashboard extends StatelessWidget {
   const StudentDashboard({super.key});
@@ -346,7 +349,7 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
   child: ListTile(
     leading: const Icon(Icons.info_outline),
     title: const Text('My Info'),
-    subtitle: const Text('Merchant personal & business details'),
+    subtitle: const Text('Personal & business details'),
     trailing: const Icon(Icons.arrow_forward_ios, size: 16),
     onTap: () {
       Navigator.push(
@@ -361,17 +364,67 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
   ),
 ),
 
+Card(
+  shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(14),
+  ),
+  child: ListTile(
+    leading: const Icon(Icons.account_balance),
+    title: const Text('Bank Account'),
+    subtitle: const Text('Add / Update Bank Account'),
+    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
 
-          Card(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            child: const ListTile(
-              leading: Icon(Icons.account_balance),
-              title: Text('Bank Account'),
-              subtitle: Text('Add / Update Bank Account'),
-              trailing: Icon(Icons.arrow_forward_ios, size: 16),
-            ),
-          ),
+   onTap: () async {
+  final result = await ApiService.checkAnyLinkedBank(
+    mobile: widget.mobile,
+  );
+
+  if (!context.mounted) return;
+
+  // 🔍 DEBUG (TEMPORARY – REMOVE AFTER CONFIRMATION)
+  debugPrint('CHECK ANY BANK RESULT: $result');
+
+  // ================= ANY BANK LINKED =================
+  if (result['linked'] == true) {
+    final account = result['account'] ?? {};
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LinkedBankAccountScreen(
+          bankName: account['bank_name']?.toString() ?? '-',
+          accountHolderName:
+              account['account_holder_name']?.toString() ?? '-',
+          accountNumber:
+              account['account_number']?.toString() ?? '-',
+          ifscCode:
+              account['ifsc_code']?.toString() ?? '-',
+          merchantMobile: widget.mobile,
+          merchantName: widget.merchantName,
+          companyName: widget.companyName,
+        ),
+      ),
+    );
+  }
+
+  // ================= NO BANK LINKED =================
+  else {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddBankAccountScreen(
+          merchantMobile: widget.mobile,
+          merchantName: widget.merchantName,
+          companyName: widget.companyName,
+        ),
+      ),
+    );
+  }
+},
+
+  ),
+),
+
           const Spacer(),
           ElevatedButton.icon(
             icon: const Icon(Icons.logout),
