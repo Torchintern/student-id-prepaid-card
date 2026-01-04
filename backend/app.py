@@ -1,8 +1,11 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from datetime import datetime
 import re
-
+import uuid
+import os
+from werkzeug.utils import secure_filename
+from flask import send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from db import get_db
@@ -13,6 +16,19 @@ CORS(app)
 
 EMAIL_REGEX = r'^[\w\.-]+@[\w\.-]+\.\w+$'
 MOBILE_REGEX = r'^\d{10}$'
+
+
+def admin_guard():
+    token = request.headers.get("X-ADMIN-TOKEN")
+    if not token:
+        return False
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+    cur.execute("SELECT id FROM admins WHERE token=%s", (token,))
+    admin = cur.fetchone()
+
+    return admin is not None
 
 
 @app.route("/", methods=["GET"])
@@ -190,56 +206,6 @@ def change_merchant_pin():
 
     return jsonify({"message": "PIN updated successfully"}), 200
 
-
-# ================= MERCHANT PAY (DEBIT) =================
-@app.route("/merchant/pay", methods=["POST"])
-def merchant_pay():
-    data = request.json
-    mobile = data.get("mobile")
-    receiver = data.get("receiver")
-    amount = data.get("amount")
-    pin = data.get("pin")
-
-    db = get_db()
-    cur = db.cursor(dictionary=True)
-
-    cur.execute(
-        "SELECT id, pin_hash, pin_attempts FROM merchants WHERE mobile=%s",
-        (mobile,)
-    )
-    merchant = cur.fetchone()
-
-    if not merchant:
-        return jsonify({"message": "Merchant not found"}), 404
-
-    if not merchant["pin_hash"]:
-        return jsonify({"message": "PIN not set"}), 403
-
-    if merchant["pin_attempts"] >= 3:
-        _insert_txn(cur, merchant["id"], receiver, amount, "DEBIT", "FAILED")
-        db.commit()
-        return jsonify({"message": "PIN locked"}), 403
-
-    if not check_password_hash(merchant["pin_hash"], pin):
-        cur.execute(
-            "UPDATE merchants SET pin_attempts = pin_attempts + 1 WHERE id=%s",
-            (merchant["id"],)
-        )
-        _insert_txn(cur, merchant["id"], receiver, amount, "DEBIT", "FAILED")
-        db.commit()
-        return jsonify({"message": "Invalid PIN"}), 403
-
-    cur.execute(
-        "UPDATE merchants SET pin_attempts = 0 WHERE id=%s",
-        (merchant["id"],)
-    )
-
-    _insert_txn(cur, merchant["id"], receiver, amount, "DEBIT", "SUCCESS")
-    db.commit()
-
-    return jsonify({"message": "Payment successful"}), 200
-
-
 # ================= CREATE QR =================
 @app.route("/qr/create", methods=["POST"])
 def create_qr():
@@ -398,6 +364,7 @@ def merchant_daily_summary():
     )
 
     return jsonify(cur.fetchone()), 200
+#=========== transaction Filter ==============
 @app.route("/merchant/transactions/filter", methods=["POST"])
 def merchant_transactions_filter():
     data = request.json
@@ -492,6 +459,38 @@ def merchant_collection_summary():
         "total": float(result["total"]),
         "count": result["count"]
     }), 200
+# Insights Custom filter
+@app.route("/merchant/insights/custom", methods=["POST"])
+def merchant_insights_custom():
+    data = request.json
+    mobile = data["mobile"]
+    start = data["start"]
+    end = data["end"]
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"data": {}}), 200
+
+    cur.execute("""
+        SELECT DATE(created_at) AS d, SUM(amount) AS total
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND DATE(created_at) BETWEEN %s AND %s
+        GROUP BY DATE(created_at)
+        ORDER BY d
+    """, (merchant["id"], start, end))
+
+    return jsonify({
+        "data": {row["d"].strftime('%d %b'): float(row["total"])
+                 for row in cur.fetchall()}
+    }), 200
+
 
 # ================= BUSINESS INSIGHTS (TODAY) =================
 @app.route("/merchant/insights/today", methods=["POST"])
@@ -529,6 +528,76 @@ def merchant_insights_today():
 
     return jsonify({"data": data, "growth": 0}), 200
 
+# =========== Business INsights summary (ystrdy)=================
+@app.route("/merchant/summary/yesterday", methods=["POST"])
+def merchant_yesterday_summary():
+    mobile = request.json.get("mobile")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"total": 0, "count": 0}), 200
+
+    cur.execute("""
+        SELECT IFNULL(SUM(amount),0) AS total, COUNT(*) AS count
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND DATE(created_at)=CURDATE() - INTERVAL 1 DAY
+    """, (merchant["id"],))
+
+    return jsonify(cur.fetchone()), 200
+#======== Business Insights Summary prev-week =========
+@app.route("/merchant/summary/prev-week", methods=["POST"])
+def merchant_prev_week_summary():
+    mobile = request.json.get("mobile")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"total": 0, "count": 0}), 200
+
+    cur.execute("""
+        SELECT IFNULL(SUM(amount),0) AS total, COUNT(*) AS count
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND YEARWEEK(created_at,1)=YEARWEEK(CURDATE(),1)-1
+    """, (merchant["id"],))
+
+    return jsonify(cur.fetchone()), 200
+# ================== Business Inights prev month ===========
+@app.route("/merchant/summary/prev-month", methods=["POST"])
+def merchant_prev_month_summary():
+    mobile = request.json.get("mobile")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"total": 0, "count": 0}), 200
+
+    cur.execute("""
+        SELECT IFNULL(SUM(amount),0) AS total, COUNT(*) AS count
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND MONTH(created_at)=MONTH(CURDATE() - INTERVAL 1 MONTH)
+          AND YEAR(created_at)=YEAR(CURDATE() - INTERVAL 1 MONTH)
+    """, (merchant["id"],))
+
+    return jsonify(cur.fetchone()), 200
 
 # ================= BUSINESS INSIGHTS (MONTHLY) =================
 @app.route("/merchant/insights/monthly", methods=["POST"])
@@ -565,349 +634,537 @@ def merchant_insights_monthly():
     data = {row["label"]: float(row["total"]) for row in cur.fetchall()}
 
     return jsonify({"data": data, "growth": 0}), 200
-# Merchant MY INFO
-@app.route('/merchant/my-info', methods=['POST'])
+
+# ================= MERCHANT MY INFO =================
+@app.route("/merchant/my-info", methods=["POST"])
 def merchant_my_info():
-    data = request.json
-    mobile = data['mobile']
-
-    db = get_db()
-    cur = db.cursor(dictionary=True)
-
-    cur.execute("""
-        SELECT merchant_name, company_name, business_type,
-               mobile, email, aadhaar,
-               email_verified, aadhaar_verified,
-               allow_sensitive_edit
-        FROM merchants
-        WHERE mobile=%s
-    """, (mobile,))
-    merchant = cur.fetchone()
-    cur.close()
-
-    if not merchant:
-        return jsonify({'message': 'Merchant not found'}), 404
-
-    return jsonify(merchant), 200
-# Merchant Update INFO
-@app.route('/merchant/update-info', methods=['POST'])
-def update_merchant_info():
-    data = request.json
-    mobile = data.get('mobile')
-    email = data.get('email')
-    aadhaar = data.get('aadhaar')
-
-    if not mobile:
-        return jsonify({'message': 'Mobile is required'}), 400
-
-    db = get_db()
-    cur = db.cursor()
-
-    # Allow edit after OTP verification
-    cur.execute(
-        "UPDATE merchants SET allow_sensitive_edit=1 WHERE mobile=%s",
-        (mobile,)
-    )
-
-    if email:
-        cur.execute("""
-            UPDATE merchants
-            SET email=%s,
-                email_verified=1,
-                allow_sensitive_edit=0
-            WHERE mobile=%s
-        """, (email, mobile))
-
-    if aadhaar:
-        cur.execute("""
-            UPDATE merchants
-            SET aadhaar=%s,
-                aadhaar_verified=1,
-                allow_sensitive_edit=0
-            WHERE mobile=%s
-        """, (aadhaar, mobile))
-
-    db.commit()
-    cur.close()
-
-    return jsonify({'message': 'Information updated successfully'}), 200
-# ================= BANKS (STATIC LIST) =================
-@app.route("/banks/list", methods=["GET"])
-def banks_list():
-    return jsonify([
-        {"name": "ICICI Bank"},
-        {"name": "HDFC Bank"},
-        {"name": "Punjab National Bank"},
-        {"name": "Kotak Mahindra Bank"},
-        {"name": "Indian Bank"},
-        {"name": "State Bank of India"},
-        {"name": "IDFC First Bank"},
-        {"name": "YES Bank"},
-        {"name": "Axis Bank"},
-    ]), 200
-
-
-# ================= CHECK BANK LINK (DB BASED) =================
-@app.route("/bank/check-linked", methods=["POST"])
-def check_bank_linked():
-    data = request.json
-    mobile = data.get("mobile")
-    bank_name = data.get("bank_name")
-
-    db = get_db()
-    cur = db.cursor(dictionary=True)
-
-    cur.execute("""
-        SELECT account_number, ifsc_code, account_holder_name
-        FROM bank_accounts
-        WHERE mobile=%s AND bank_name=%s
-    """, (mobile, bank_name))
-
-    account = cur.fetchone()
-
-    if not account:
-        return jsonify({
-            "linked": False,
-            "message": "Mobile number not linked with this bank"
-        }), 200
-
-    return jsonify({
-        "linked": True,
-        "account": account
-    }), 200
-
-
-# ================= ADD MERCHANT BANK =================
-@app.route("/merchant/bank/add", methods=["POST"])
-def add_merchant_bank():
-    data = request.json
-
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute("""
-        INSERT INTO merchant_bank_accounts
-        (merchant_mobile, bank_name, account_number, ifsc_code)
-        VALUES (%s,%s,%s,%s)
-    """, (
-        data["mobile"],
-        data["bank_name"],
-        data["account_number"],
-        data["ifsc_code"],
-    ))
-
-    db.commit()
-    return jsonify({"message": "Bank account linked successfully"}), 200
-# verification OTP for bank
-@app.route("/bank/send-otp", methods=["POST"])
-def send_bank_otp():
     mobile = request.json.get("mobile")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+    cur.execute("""
+        SELECT
+            merchant_name, company_name, business_type, mobile,
+            email, email_verified, dob,
+            aadhaar, aadhaar_front_path, aadhaar_back_path, aadhaar_verified,
+            gst_number, gst_doc_path, gst_verified,
+            wallet_status, wallet_created
+        FROM merchants WHERE mobile=%s
+    """, (mobile,))
+
+    m = cur.fetchone()
+    if not m:
+        return jsonify({"message": "Merchant not found"}), 404
+    return jsonify(m), 200
+
+
+# ================= UPDATE INFO (EMAIL / DOB) =================
+
+@app.route("/merchant/update-info", methods=["POST"])
+def update_merchant_info():
+    d = request.json
+    mobile = d.get("mobile")
+    email = d.get("email")
+    dob = d.get("dob")
 
     if not mobile:
         return jsonify({"message": "Mobile required"}), 400
 
-    send_otp(mobile)
-    return jsonify({"message": "OTP sent to registered mobile"}), 200
-# VERIFY OTP + LINK BANK
-@app.route("/merchant/bank/link", methods=["POST"])
-def link_bank_account():
-    data = request.json
+    db = get_db()
+    cur = db.cursor()
 
-    mobile = data.get("mobile")
-    bank_name = data.get("bank_name")
-    account_number = data.get("account_number")
-    ifsc_code = data.get("ifsc_code")
+    # ---------- EMAIL UPDATE ----------
+    if email:
+        if not re.match(EMAIL_REGEX, email):
+            return jsonify({"message": "Invalid email"}), 400
+
+        cur.execute("""
+            UPDATE merchants
+            SET email=%s, email_verified=1
+            WHERE mobile=%s
+        """, (email, mobile))
+
+    # ---------- DOB UPDATE (DATE ONLY) ----------
+    if dob:
+        try:
+            # Enforce strict yyyy-mm-dd
+            clean_dob = datetime.strptime(dob, "%Y-%m-%d").date()
+
+            cur.execute("""
+                UPDATE merchants
+                SET dob=%s
+                WHERE mobile=%s AND dob IS NULL
+            """, (clean_dob, mobile))
+
+        except ValueError:
+            return jsonify(
+                {"message": "DOB must be in yyyy-mm-dd format"},
+                400
+            )
+
+    db.commit()
+    return jsonify({"message": "Updated"}), 200
+
+
+# ================= KYC UPLOADS =================
+# ========== Merchant KYC aadhar ==========
+@app.route("/merchant/kyc/aadhaar", methods=["POST"])
+def upload_aadhaar():
+    mobile = request.form.get("mobile")
+    aadhaar = request.form.get("aadhaar")
+    front = request.files.get("front")
+    back = request.files.get("back")
+
+    if not all([mobile, aadhaar, front, back]):
+        return jsonify({"message": "Incomplete Aadhaar data"}), 400
+
+    os.makedirs("uploads/aadhaar", exist_ok=True)
+
+    front_path = f"uploads/aadhaar/{mobile}_front_{secure_filename(front.filename)}"
+    back_path = f"uploads/aadhaar/{mobile}_back_{secure_filename(back.filename)}"
+
+    front.save(front_path)
+    back.save(back_path)
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        UPDATE merchants
+        SET aadhaar=%s,
+            aadhaar_front_path=%s,
+            aadhaar_back_path=%s,
+            aadhaar_verified=0,
+            aadhaar_submitted_at=NOW()
+        WHERE mobile=%s
+    """, (aadhaar, front_path, back_path, mobile))
+    db.commit()
+
+    return jsonify({"message": "Aadhaar submitted"}), 200
+
+# ========== Merchant KYC GST ============
+@app.route("/merchant/kyc/gst", methods=["POST"])
+def upload_gst():
+    mobile = request.form.get("mobile")
+    gst_number = request.form.get("gst_number")
+    gst_doc = request.files.get("gst_doc")
+
+    if not all([mobile, gst_number, gst_doc]):
+        return jsonify({"message": "Incomplete GST data"}), 400
+
+    os.makedirs("uploads/gst", exist_ok=True)
+    gst_path = f"uploads/gst/{mobile}_{secure_filename(gst_doc.filename)}"
+    gst_doc.save(gst_path)
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        UPDATE merchants
+        SET gst_number=%s,
+            gst_doc_path=%s,
+            gst_verified=0,
+            gst_submitted_at=NOW()
+        WHERE mobile=%s
+    """, (gst_number, gst_path, mobile))
+    db.commit()
+
+    return jsonify({"message": "GST submitted"}), 200
+
+
+# ================= ADMIN KYC =================
+
+@app.route("/admin/kyc/pending", methods=["GET"])
+def admin_pending_kyc():
+    if not admin_guard():
+        return jsonify({"message": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("""
+        SELECT
+            id,
+            merchant_name,
+            mobile,
+            aadhaar_verified,
+            gst_verified
+        FROM merchants
+        WHERE aadhaar_verified = 0
+           OR gst_verified = 0
+    """)
+
+    merchants = cur.fetchall()
+    cur.close()
+
+    return jsonify(merchants), 200
+
+
+# -------- Wallet auto-activation helper --------
+def _activate_wallet_if_ready(cur, merchant_id):
+    """
+    Activate wallet ONLY if all KYC & email are verified
+    """
+    cur.execute("""
+        UPDATE merchants
+        SET wallet_status = 'ACTIVE',
+            wallet_created = 1
+        WHERE id = %s
+          AND email_verified = 1
+          AND aadhaar_verified = 1
+          AND gst_verified = 1
+    """, (merchant_id,))
+
+
+# -------- Aadhaar Verification --------
+@app.route("/admin/verify/aadhaar", methods=["POST"])
+def admin_verify_aadhaar():
+    if not admin_guard():
+        return jsonify({"message": "Unauthorized"}), 401
+
+    data = request.json
+    merchant_id = data.get("merchant_id")
+
+    if not merchant_id:
+        return jsonify({"message": "merchant_id is required"}), 400
 
     db = get_db()
     cur = db.cursor()
 
-    # Prevent duplicate linking
+    # Mark Aadhaar verified
     cur.execute("""
-        SELECT id FROM merchant_bank_accounts
-        WHERE merchant_mobile=%s AND bank_name=%s
-    """, (mobile, bank_name))
+        UPDATE merchants
+        SET aadhaar_verified = 1
+        WHERE id = %s
+    """, (merchant_id,))
 
-    if cur.fetchone():
-        return jsonify({"message": "Bank already linked"}), 409
-
-    cur.execute("""
-        INSERT INTO merchant_bank_accounts
-        (merchant_mobile, bank_name, account_number, ifsc_code)
-        VALUES (%s,%s,%s,%s)
-    """, (mobile, bank_name, account_number, ifsc_code))
+    # Try wallet activation
+    _activate_wallet_if_ready(cur, merchant_id)
 
     db.commit()
     cur.close()
 
-    return jsonify({"message": "Bank linked successfully"}), 200
-#check any bank linked or not
-@app.route("/merchant/bank/check-any", methods=["POST"])
-def check_any_bank():
+    return jsonify({"message": "Aadhaar verified successfully"}), 200
+
+
+# -------- GST Verification --------
+@app.route("/admin/verify/gst", methods=["POST"])
+def admin_verify_gst():
+    if not admin_guard():
+        return jsonify({"message": "Unauthorized"}), 401
+
+    data = request.json
+    merchant_id = data.get("merchant_id")
+
+    if not merchant_id:
+        return jsonify({"message": "merchant_id is required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Mark GST verified
+    cur.execute("""
+        UPDATE merchants
+        SET gst_verified = 1
+        WHERE id = %s
+    """, (merchant_id,))
+
+    # Try wallet activation
+    _activate_wallet_if_ready(cur, merchant_id)
+
+    db.commit()
+    cur.close()
+
+    return jsonify({"message": "GST verified successfully"}), 200
+
+
+
+# ================= WALLET =================
+@app.route("/wallet/balance", methods=["POST"])
+def wallet_balance():
     mobile = request.json.get("mobile")
 
     db = get_db()
     cur = db.cursor(dictionary=True)
+    cur.execute("SELECT id, wallet_status FROM merchants WHERE mobile=%s", (mobile,))
+    m = cur.fetchone()
 
-    cur.execute("""
-        SELECT bank_name, account_number, ifsc_code
-        FROM merchant_bank_accounts
-        WHERE merchant_mobile=%s
-        LIMIT 1
-    """, (mobile,))
+    if not m or m["wallet_status"] != "ACTIVE":
+        return jsonify({"balance": 0}), 200
 
-    account = cur.fetchone()
-
-    if not account:
-        return jsonify({"linked": False}), 200
-
-    return jsonify({
-        "linked": True,
-        "account": account
-    }), 200
-    # check balance
-@app.route("/merchant/bank/balance", methods=["POST"])
-def merchant_check_balance():
-    data = request.json
-
-    mobile = data.get("mobile")
-    pin = data.get("pin")
-    bank_name = data.get("bank_name")
-
-    if not all([mobile, pin, bank_name]):
-        return jsonify({"message": "Missing required fields"}), 400
-
-    db = get_db()
-    cur = db.cursor(dictionary=True)
-
-    # ================= VERIFY MERCHANT PIN =================
-    cur.execute(
-        "SELECT id, pin_hash, pin_attempts FROM merchants WHERE mobile=%s",
-        (mobile,)
-    )
-    merchant = cur.fetchone()
-
-    if not merchant:
-        return jsonify({"message": "Merchant not found"}), 404
-
-    if not merchant["pin_hash"]:
-        return jsonify({"message": "PIN not set"}), 403
-
-    if merchant["pin_attempts"] >= 3:
-        return jsonify({"message": "PIN locked"}), 403
-
-    if not check_password_hash(merchant["pin_hash"], pin):
-        cur.execute(
-            "UPDATE merchants SET pin_attempts = pin_attempts + 1 WHERE id=%s",
-            (merchant["id"],)
-        )
-        db.commit()
-        return jsonify({"message": "Invalid PIN"}), 403
-
-    # Reset PIN attempts
-    cur.execute(
-        "UPDATE merchants SET pin_attempts=0 WHERE id=%s",
-        (merchant["id"],)
-    )
-
-    # ================= FETCH BALANCE FROM BANK TABLE =================
-    cur.execute("""
-        SELECT available_balance
-        FROM merchant_bank_accounts
-        WHERE merchant_mobile=%s AND bank_name=%s
-        LIMIT 1
-    """, (mobile, bank_name))
-
-    bank = cur.fetchone()
-
-    if not bank:
-        return jsonify({"message": "Bank account not found"}), 404
-
-    balance = bank["available_balance"] or 0
-
-    db.commit()
-    cur.close()
-
-    return jsonify({
-        "bank_name": bank_name,
-        "balance": float(balance),
-    }), 200
-
-
-    # ================= VERIFY MERCHANT =================
-    cur.execute(
-        "SELECT id, pin_hash, pin_attempts FROM merchants WHERE mobile=%s",
-        (mobile,)
-    )
-    merchant = cur.fetchone()
-
-    if not merchant:
-        return jsonify({"message": "Merchant not found"}), 404
-
-    if not merchant["pin_hash"]:
-        return jsonify({"message": "PIN not set"}), 403
-
-    if merchant["pin_attempts"] >= 3:
-        return jsonify({"message": "PIN locked"}), 403
-
-    if not check_password_hash(merchant["pin_hash"], pin):
-        cur.execute(
-            "UPDATE merchants SET pin_attempts = pin_attempts + 1 WHERE id=%s",
-            (merchant["id"],)
-        )
-        db.commit()
-        return jsonify({"message": "Invalid PIN"}), 403
-
-    # Reset attempts
-    cur.execute(
-        "UPDATE merchants SET pin_attempts = 0 WHERE id=%s",
-        (merchant["id"],)
-    )
-
-    # ================= BANK-SPECIFIC BALANCE =================
     cur.execute("""
         SELECT IFNULL(SUM(
-          CASE 
-            WHEN t.type='CREDIT' AND t.status='SUCCESS' THEN t.amount
-            WHEN t.type='DEBIT'  AND t.status='SUCCESS' THEN -t.amount
-            ELSE 0
-          END
-        ), 0) AS balance
-        FROM transactions t
-        JOIN merchant_bank_accounts b
-          ON b.merchant_mobile=%s
-         AND b.bank_name=%s
-        WHERE t.merchant_id=%s
-    """, (
-        mobile,
-        bank_name,
-        merchant["id"],
-    ))
+            CASE WHEN type='CREDIT' THEN amount ELSE -amount END
+        ),0) AS balance
+        FROM transactions WHERE merchant_id=%s AND status='SUCCESS'
+    """, (m["id"],))
 
-    balance = cur.fetchone()["balance"]
+    return jsonify({"balance": float(cur.fetchone()["balance"])}), 200
+
+# ========== Wallet Check Paymnt ===========
+@app.route("/wallet/check-payment", methods=["GET"])
+def check_wallet_payment():
+    mobile = request.args.get("merchant_mobile")
+    created_at = request.args.get("created_at")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+    cur.execute("""
+        SELECT status FROM transactions t
+        JOIN merchants m ON m.id=t.merchant_id
+        WHERE m.mobile=%s AND t.created_at >= %s
+        ORDER BY t.created_at DESC LIMIT 1
+    """, (mobile, created_at))
+
+    r = cur.fetchone()
+    return jsonify({"status": r["status"] if r else "PENDING"}), 200
+
+
+# ================= WALLET PAY =================
+@app.route("/merchant/wallet/pay", methods=["POST"])
+def merchant_wallet_pay():
+    d = request.json
+    mobile = d.get("mobile")
+    amount = float(d.get("amount"))
+    pin = d.get("pin")
+    receiver = d.get("receiver")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    # Fetch merchant
+    cur.execute("""
+        SELECT id, pin_hash, pin_attempts, wallet_status
+        FROM merchants
+        WHERE mobile=%s
+    """, (mobile,))
+    m = cur.fetchone()
+
+    if not m or m["wallet_status"] != "ACTIVE":
+        return jsonify({"status": "FAILED", "reason": "Wallet inactive"}), 403
+
+    # PIN lock check
+    if m.get("pin_attempts", 0) >= 3:
+        return jsonify({"status": "FAILED", "reason": "PIN Locked"}), 403
+
+    # PIN validation
+    if not check_password_hash(m["pin_hash"], pin):
+        cur.execute("""
+            UPDATE merchants
+            SET pin_attempts = pin_attempts + 1
+            WHERE id = %s
+        """, (m["id"],))
+        db.commit()
+
+        return jsonify({"status": "FAILED", "reason": "Invalid PIN"}), 403
+
+    # Reset PIN attempts on success
+    cur.execute("""
+        UPDATE merchants
+        SET pin_attempts = 0
+        WHERE id = %s
+    """, (m["id"],))
+
+    # Check balance
+    cur.execute("""
+        SELECT IFNULL(SUM(
+            CASE WHEN type='CREDIT' THEN amount ELSE -amount END
+        ),0) AS balance
+        FROM transactions
+        WHERE merchant_id=%s AND status='SUCCESS'
+    """, (m["id"],))
+
+    if cur.fetchone()["balance"] < amount:
+        db.commit()
+        return jsonify({"status": "FAILED", "reason": "Insufficient balance"}), 403
+
+    # Debit transaction
+    _insert_txn(cur, m["id"], receiver, amount, "DEBIT", "SUCCESS")
+    db.commit()
+
+    return jsonify({"status": "SUCCESS"}), 200
+
+# ============ wallet Transfer ===============
+
+@app.route("/wallet/transfer", methods=["POST"])
+def wallet_transfer():
+    d = request.json
+    sender_mobile = d.get("sender_mobile")
+    receiver_input = d.get("receiver")
+    amount = float(d.get("amount"))
+    pin = d.get("pin")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    # -------- Fetch sender --------
+    cur.execute("""
+        SELECT id, pin_hash, pin_attempts, wallet_status
+        FROM merchants WHERE mobile=%s
+    """, (sender_mobile,))
+    sender = cur.fetchone()
+
+    if not sender or sender["wallet_status"] != "ACTIVE":
+        return jsonify({"status": "FAILED", "reason": "Wallet inactive"}), 403
+
+    # -------- PIN lock check --------
+    if sender["pin_attempts"] >= 3:
+        return jsonify({"status": "FAILED", "reason": "PIN Locked"}), 403
+
+    # -------- PIN validation --------
+    if not check_password_hash(sender["pin_hash"], pin):
+        cur.execute("""
+            UPDATE merchants
+            SET pin_attempts = pin_attempts + 1
+            WHERE id = %s
+        """, (sender["id"],))
+        db.commit()
+
+        return jsonify({"status": "FAILED", "reason": "Invalid PIN"}), 403
+
+    # Reset attempts on success
+    cur.execute("""
+        UPDATE merchants SET pin_attempts = 0 WHERE id=%s
+    """, (sender["id"],))
+
+    # -------- Resolve receiver --------
+    cur.execute("""
+        SELECT id, merchant_name
+        FROM merchants
+        WHERE mobile=%s OR upi_id=%s
+    """, (receiver_input, receiver_input))
+    receiver = cur.fetchone()
+
+    if not receiver:
+        return jsonify({"status": "FAILED", "reason": "Receiver not found"}), 404
+
+    # -------- Check balance --------
+    cur.execute("""
+        SELECT IFNULL(SUM(
+            CASE WHEN type='CREDIT' THEN amount ELSE -amount END
+        ),0) AS balance
+        FROM transactions
+        WHERE merchant_id=%s AND status='SUCCESS'
+    """, (sender["id"],))
+
+    if cur.fetchone()["balance"] < amount:
+        return jsonify({"status": "FAILED", "reason": "Insufficient balance"}), 403
+
+    # -------- Perform transfer (atomic) --------
+    reference = f"TXN_{uuid.uuid4().hex[:8]}"
+
+    _insert_txn(cur, sender["id"], receiver["merchant_name"],
+                amount, "DEBIT", "SUCCESS")
+    _insert_txn(cur, receiver["id"], sender_mobile,
+                amount, "CREDIT", "SUCCESS")
+
     db.commit()
 
     return jsonify({
-        "bank_name": bank_name,
-        "balance": float(balance),
+        "status": "SUCCESS",
+        "reference": reference
     }), 200
 
-# fetch bank account
-@app.route("/merchant/bank/list", methods=["POST"])
-def list_merchant_banks():
+
+
+# ================= FILE SERVE =================
+@app.route("/uploads/<path:filename>")
+def serve_uploaded_file(filename):
+    return send_from_directory("uploads", filename)
+
+
+
+    
+# ============ Merchant rewards =============
+@app.route("/merchant/rewards/total", methods=["POST"])
+def get_total_rewards():
     mobile = request.json.get("mobile")
 
     db = get_db()
     cur = db.cursor(dictionary=True)
 
-    cur.execute("""
-        SELECT bank_name, account_number, ifsc_code
-        FROM merchant_bank_accounts
-        WHERE merchant_mobile=%s
-    """, (mobile,))
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify({"total_rewards": 0}), 200
 
-    accounts = cur.fetchall()
-    return jsonify(accounts), 200
-    
+    cur.execute("""
+        SELECT IFNULL(SUM(amount),0) AS total
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND source='CASHBACK'
+    """, (merchant["id"],))
+
+    res = cur.fetchone()
+
+    return jsonify({
+        "total_rewards": float(res["total"])
+    }), 200
+
+@app.route("/merchant/rewards/history", methods=["POST"])
+def rewards_history():
+    mobile = request.json.get("mobile")
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM merchants WHERE mobile=%s", (mobile,))
+    merchant = cur.fetchone()
+    if not merchant:
+        return jsonify([]), 200
+
+    cur.execute("""
+        SELECT amount, created_at, payer_name
+        FROM transactions
+        WHERE merchant_id=%s
+          AND type='CREDIT'
+          AND status='SUCCESS'
+          AND source='CASHBACK'
+        ORDER BY created_at DESC
+    """, (merchant["id"],))
+
+    return jsonify(cur.fetchall()), 200
+
+# ================= ADMIN LOGIN =================
+@app.route("/admin/login", methods=["POST"])
+def admin_login():
+    data = request.json
+    mobile = data.get("mobile")
+    otp = data.get("otp")
+
+    if not re.match(MOBILE_REGEX, mobile):
+        return jsonify({"message": "Invalid mobile"}), 400
+
+    if not verify_otp(mobile, otp):
+        return jsonify({"message": "Invalid OTP"}), 401
+
+    db = get_db()
+    cur = db.cursor(dictionary=True)
+
+    cur.execute("SELECT id, name FROM admins WHERE mobile=%s", (mobile,))
+    admin = cur.fetchone()
+
+    if not admin:
+        return jsonify({"message": "Not an admin"}), 403
+
+    # Generate token
+    token = str(uuid.uuid4())
+
+    cur.execute("""
+        UPDATE admins
+        SET token=%s
+        WHERE id=%s
+    """, (token, admin["id"]))
+
+    db.commit()
+
+    return jsonify({
+        "message": "Admin login successful",
+        "token": token,
+        "admin_name": admin["name"]
+    }), 200
+
+
 
 # ================= HELPER =================
 def _insert_txn(cur, merchant_id, payer_name, amount, txn_type, status):

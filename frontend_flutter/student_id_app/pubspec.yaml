@@ -10,28 +10,36 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # ---------------- Media & File Handling ----------------
+  image_picker: ^1.0.4
+  file_picker: ^8.0.0  
+  open_filex: ^4.3.4         
+
+  # ---------------- Firebase ----------------
+  firebase_messaging: ^14.7.10
+
+  # ---------------- UI & Icons ----------------
+  cupertino_icons: ^1.0.6
   font_awesome_flutter: ^10.7.0
+
+  # ---------------- Networking & Backend ----------------
+  http: ^1.2.0
   url_launcher: ^6.2.6
 
-  # UI & Material
-  cupertino_icons: ^1.0.6
-
-  # HTTP & Backend
-  http: ^1.2.0
-
-  # QR Generation & Scanning
+  # ---------------- QR Generation & Scanning ----------------
   qr_flutter: ^4.1.0
   mobile_scanner: ^3.5.6
 
-  # Charts & Business Insights
-  fl_chart: ^0.68.0
-
-  # Share, Download & Clipboard
+  # ---------------- Share & Storage ----------------
   share_plus: ^7.2.1
   path_provider: ^2.1.2
   permission_handler: ^11.3.0
 
-  # State & Utilities
+  # ---------------- Charts & Insights ----------------
+  fl_chart: ^0.68.0
+
+  # ---------------- Localization & Utilities ----------------
   intl: ^0.19.0
 
 dev_dependencies:

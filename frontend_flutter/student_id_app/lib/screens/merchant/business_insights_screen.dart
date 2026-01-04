@@ -3,6 +3,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../services/api_service.dart';
 
 enum GraphType { bar, line, pie }
+enum InsightsTab { today, week, month, custom }
 
 class BusinessInsightsScreen extends StatefulWidget {
   final String merchantMobile;
@@ -22,158 +23,274 @@ class _BusinessInsightsScreenState extends State<BusinessInsightsScreen>
   late TabController _tabController;
 
   GraphType _graphType = GraphType.bar;
+  InsightsTab _currentTab = InsightsTab.today;
+
   bool _loading = true;
 
-  // Backend data
-  Map<String, double> todayData = {};
-  Map<String, double> monthData = {};
-  double todayGrowth = 0;
-  double monthGrowth = 0;
+  Map<String, double> chartData = {};
+  double totalAmount = 0;
+  int totalCount = 0;
+  double growthPercent = 0;
+
+  DateTimeRange? _customRange;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(_onTabChanged);
     _loadInsights();
   }
 
-  Future<void> _loadInsights() async {
-    final todayRes =
-        await ApiService.getTodayInsights(widget.merchantMobile);
-    final monthRes =
-        await ApiService.getMonthlyInsights(widget.merchantMobile);
+  void _onTabChanged() {
+    if (_tabController.indexIsChanging) return;
 
     setState(() {
-      todayData =
-          Map<String, double>.from(todayRes['data']);
-      todayGrowth = todayRes['growth'].toDouble();
-
-      monthData =
-          Map<String, double>.from(monthRes['data']);
-      monthGrowth = monthRes['growth'].toDouble();
-
-      _loading = false;
+      _currentTab = InsightsTab.values[_tabController.index];
     });
+
+    if (_currentTab == InsightsTab.custom && _customRange == null) {
+      _pickDateRange();
+    } else {
+      _loadInsights();
+    }
   }
 
-  // ================= GRAPH BUILDER =================
-  Widget _buildGraph(Map<String, double> data) {
-    if (data.isEmpty) {
-      return const Center(child: Text('No data'));
+  Future<void> _loadInsights() async {
+    setState(() => _loading = true);
+
+    try {
+      Map<String, dynamic> insightsRes;
+      Map<String, dynamic> currentSummary;
+      Map<String, dynamic> previousSummary;
+
+      switch (_currentTab) {
+        case InsightsTab.today:
+          insightsRes =
+              await ApiService.getTodayInsights(widget.merchantMobile);
+          currentSummary =
+              await ApiService.getMerchantCollectionSummary(
+                  widget.merchantMobile, 'today');
+          previousSummary =
+              await ApiService.getYesterdaySummary(widget.merchantMobile);
+          break;
+
+        case InsightsTab.week:
+          insightsRes =
+              await ApiService.getTodayInsights(widget.merchantMobile);
+          currentSummary =
+              await ApiService.getMerchantCollectionSummary(
+                  widget.merchantMobile, 'week');
+          previousSummary =
+              await ApiService.getPrevWeekSummary(widget.merchantMobile);
+          break;
+
+        case InsightsTab.month:
+          insightsRes =
+              await ApiService.getMonthlyInsights(widget.merchantMobile);
+          currentSummary =
+              await ApiService.getMerchantCollectionSummary(
+                  widget.merchantMobile, 'month');
+          previousSummary =
+              await ApiService.getPrevMonthSummary(widget.merchantMobile);
+          break;
+
+        case InsightsTab.custom:
+          if (_customRange == null) {
+            setState(() => _loading = false);
+            return;
+          }
+
+          final diff = _customRange!.duration;
+
+          insightsRes = await ApiService.getCustomInsights(
+            mobile: widget.merchantMobile,
+            start: _customRange!.start,
+            end: _customRange!.end,
+          );
+
+          currentSummary = {
+            'total': insightsRes['total'] ?? 0,
+            'count': insightsRes['count'] ?? 0,
+          };
+
+          final prevRes = await ApiService.getCustomInsights(
+            mobile: widget.merchantMobile,
+            start: _customRange!.start.subtract(diff),
+            end: _customRange!.end.subtract(diff),
+          );
+
+          previousSummary = {
+            'total': prevRes['total'] ?? 0,
+            'count': prevRes['count'] ?? 0,
+          };
+          break;
+      }
+
+      final currentTotal =
+          (currentSummary['total'] ?? 0).toDouble();
+      final previousTotal =
+          (previousSummary['total'] ?? 0).toDouble();
+
+      setState(() {
+        chartData = _parseChartData(insightsRes['data']);
+        totalAmount = currentTotal;
+        totalCount = currentSummary['count'] ?? 0;
+        growthPercent = _calculateGrowth(
+          currentTotal,
+          previousTotal,
+        );
+        _loading = false;
+      });
+    } catch (_) {
+      setState(() {
+        chartData = {};
+        totalAmount = 0;
+        totalCount = 0;
+        growthPercent = 0;
+        _loading = false;
+      });
+    }
+  }
+
+  double _calculateGrowth(double current, double previous) {
+    if (previous == 0) return 0;
+    return ((current - previous) / previous) * 100;
+  }
+
+  Map<String, double> _parseChartData(dynamic raw) {
+    if (raw == null || raw is! Map) return {};
+    return raw.map(
+      (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
+    );
+  }
+
+  Future<void> _pickDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2023),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null) {
+      setState(() => _customRange = picked);
+      _loadInsights();
+    }
+  }
+
+  Widget _growthCard() {
+    final positive = growthPercent >= 0;
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(
+              positive ? Icons.trending_up : Icons.trending_down,
+              size: 40,
+              color: positive ? Colors.green : Colors.red,
+            ),
+            const SizedBox(width: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Growth'),
+                const SizedBox(height: 6),
+                Text(
+                  '${positive ? '+' : ''}${growthPercent.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: positive ? Colors.green : Colors.red,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _totalsCard() {
+    return Row(
+      children: [
+        Expanded(
+          child: _metricCard(
+              'Total Collection', '₹${totalAmount.toInt()}'),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _metricCard(
+              'Transactions', totalCount.toString()),
+        ),
+      ],
+    );
+  }
+
+  Widget _metricCard(String title, String value) {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: TextStyle(color: Colors.grey.shade600)),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: const TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGraph() {
+    if (chartData.isEmpty) {
+      return const Center(
+        child: Text(
+          'No credited transactions found',
+          style: TextStyle(color: Colors.grey),
+        ),
+      );
     }
 
-    switch (_graphType) {
-      case GraphType.line:
-        return LineChart(
-          LineChartData(
-            lineBarsData: [
-              LineChartBarData(
-                spots: data.entries
-                    .map((e) => FlSpot(
-                          data.keys.toList().indexOf(e.key)
-                              .toDouble(),
-                          e.value,
-                        ))
-                    .toList(),
-                isCurved: true,
-                barWidth: 3,
-                color: Colors.blue,
-                dotData: FlDotData(show: false),
+    final values = chartData.values.toList();
+
+    return BarChart(
+      BarChartData(
+        barGroups: List.generate(
+          values.length,
+          (i) => BarChartGroupData(
+            x: i,
+            barRods: [
+              BarChartRodData(
+                toY: values[i],
+                color: Colors.green,
+                width: 18,
               ),
             ],
           ),
-        );
-
-      case GraphType.pie:
-        return PieChart(
-          PieChartData(
-            sections: data.entries
-                .map(
-                  (e) => PieChartSectionData(
-                    title: e.key,
-                    value: e.value,
-                    radius: 60,
-                  ),
-                )
-                .toList(),
-          ),
-        );
-
-      case GraphType.bar:
-        return BarChart(
-          BarChartData(
-            barGroups: data.entries
-                .map(
-                  (e) => BarChartGroupData(
-                    x: data.keys.toList().indexOf(e.key),
-                    barRods: [
-                      BarChartRodData(
-                        toY: e.value,
-                        color: Colors.green,
-                        width: 18,
-                      ),
-                    ],
-                  ),
-                )
-                .toList(),
-          ),
-        );
-    }
+        ),
+      ),
+    );
   }
 
   Widget _graphSelector() {
     return DropdownButton<GraphType>(
       value: _graphType,
       items: const [
-        DropdownMenuItem(
-            value: GraphType.bar, child: Text('Bar')),
-        DropdownMenuItem(
-            value: GraphType.line, child: Text('Line')),
-        DropdownMenuItem(
-            value: GraphType.pie, child: Text('Pie')),
+        DropdownMenuItem(value: GraphType.bar, child: Text('Bar')),
+        DropdownMenuItem(value: GraphType.line, child: Text('Line')),
+        DropdownMenuItem(value: GraphType.pie, child: Text('Pie')),
       ],
       onChanged: (v) => setState(() => _graphType = v!),
-    );
-  }
-
-  Widget _growthCard(String title, double value) {
-    final bool positive = value >= 0;
-    return Card(
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(
-              positive
-                  ? Icons.trending_up
-                  : Icons.trending_down,
-              color: positive ? Colors.green : Colors.red,
-              size: 40,
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Text(
-                  '${positive ? '+' : ''}${value.toStringAsFixed(1)}%',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color:
-                        positive ? Colors.green : Colors.red,
-                  ),
-                ),
-              ],
-            )
-          ],
-        ),
-      ),
     );
   }
 
@@ -186,60 +303,28 @@ class _BusinessInsightsScreenState extends State<BusinessInsightsScreen>
           controller: _tabController,
           tabs: const [
             Tab(text: 'Today'),
+            Tab(text: 'Weekly'),
             Tab(text: 'Monthly'),
+            Tab(text: 'Custom'),
           ],
         ),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                const SizedBox(height: 12),
-                _graphSelector(),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _todayTab(),
-                      _monthTab(),
-                    ],
-                  ),
-                ),
-              ],
+          : Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  _graphSelector(),
+                  const SizedBox(height: 12),
+                  _totalsCard(),
+                  const SizedBox(height: 12),
+                  _growthCard(),
+                  const SizedBox(height: 16),
+                  Expanded(child: _buildGraph()),
+                ],
+              ),
             ),
-    );
-  }
-
-  Widget _todayTab() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          SizedBox(height: 250, child: _buildGraph(todayData)),
-          const SizedBox(height: 20),
-          _growthCard(
-            'Sales growth vs Yesterday',
-            todayGrowth,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _monthTab() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          SizedBox(height: 250, child: _buildGraph(monthData)),
-          const SizedBox(height: 20),
-          _growthCard(
-            'Sales growth vs Previous Month',
-            monthGrowth,
-          ),
-        ],
-      ),
     );
   }
 }

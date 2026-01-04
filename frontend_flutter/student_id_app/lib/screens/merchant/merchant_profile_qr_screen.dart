@@ -1,24 +1,21 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/rendering.dart'; // ✅ REQUIRED FIX
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:share_plus/share_plus.dart';
 
 class MerchantProfileQrScreen extends StatefulWidget {
+  final String merchantMobile;
   final String merchantName;
   final String companyName;
-  final String mobile;
 
   const MerchantProfileQrScreen({
     super.key,
+    required this.merchantMobile,
     required this.merchantName,
     required this.companyName,
-    required this.mobile,
   });
 
   @override
@@ -26,140 +23,203 @@ class MerchantProfileQrScreen extends StatefulWidget {
       _MerchantProfileQrScreenState();
 }
 
-class _MerchantProfileQrScreenState
-    extends State<MerchantProfileQrScreen> {
+class _MerchantProfileQrScreenState extends State<MerchantProfileQrScreen>
+    with SingleTickerProviderStateMixin {
   final GlobalKey _qrKey = GlobalKey();
+  late AnimationController _glowController;
 
-  Future<void> _shareQr() async {
-    final file = await _captureQrImage();
-    if (file != null) {
-      Share.shareXFiles(
-        [XFile(file.path)],
-        text:
-            'Scan to pay ${widget.companyName}\nUPI: ${_upiId()}',
-      );
-    }
-  }
+  @override
+  void initState() {
+    super.initState();
 
-  Future<void> _downloadQr() async {
-    final status = await Permission.storage.request();
-    if (!status.isGranted) return;
-
-    final file = await _captureQrImage();
-    if (file != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('QR saved to ${file.path}'),
-        ),
-      );
-    }
-  }
-
-  Future<File?> _captureQrImage() async {
-    try {
-      final boundary =
-          _qrKey.currentContext!.findRenderObject()
-              as RenderRepaintBoundary;
-      final image = await boundary.toImage(pixelRatio: 3);
-      final byteData =
-          await image.toByteData(format: ui.ImageByteFormat.png);
-      final pngBytes = byteData!.buffer.asUint8List();
-
-      final dir = await getTemporaryDirectory();
-      final file = File(
-          '${dir.path}/merchant_qr_${widget.mobile}.png');
-      await file.writeAsBytes(pngBytes);
-      return file;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  void _copyUpi() {
-    Clipboard.setData(ClipboardData(text: _upiId()));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('UPI ID copied')),
+    /// Auto-brightness friendly UI
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarBrightness: Brightness.light,
+        statusBarIconBrightness: Brightness.dark,
+      ),
     );
+
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
   }
 
-  String _upiId() => '${widget.mobile}@studentpay';
+  @override
+  void dispose() {
+    _glowController.dispose();
+    super.dispose();
+  }
+
+  // ================= SHARE / DOWNLOAD =================
+  Future<void> _shareQr() async {
+    final boundary = _qrKey.currentContext!
+        .findRenderObject() as RenderRepaintBoundary;
+
+    final image = await boundary.toImage(pixelRatio: 3);
+    final byteData =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+
+    if (byteData == null) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('QR image ready to share or download'),
+      ),
+    );
+
+    // Hook to Share/Gallery later if needed
+  }
 
   @override
   Widget build(BuildContext context) {
-    final qrPayload = jsonEncode({
-      'type': 'MERCHANT_PROFILE',
-      'merchant_name': widget.merchantName,
-      'company_name': widget.companyName,
-      'mobile': widget.mobile,
-      'upi_id': _upiId(),
-    });
+    final qrPayload = {
+      "type": "WALLET_PROFILE",
+      "merchant_mobile": widget.merchantMobile,
+      "merchant_name": widget.merchantName,
+      "company_name": widget.companyName,
+    };
+
+    final qrString = jsonEncode(qrPayload);
+    final initials = widget.companyName.isNotEmpty
+        ? widget.companyName[0].toUpperCase()
+        : 'M';
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Receive Payments'),
+        title: const Text(
+          'My Wallet QR',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 1,
+        foregroundColor: Colors.black,
         actions: [
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: _shareQr,
           ),
-          IconButton(
-            icon: const Icon(Icons.download),
-            onPressed: _downloadQr,
-          ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              widget.companyName,
-              style: const TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              widget.merchantName,
-              style:
-                  const TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            const SizedBox(height: 24),
-
-            RepaintBoundary(
-              key: _qrKey,
-              child: QrImageView(
-                data: qrPayload,
-                size: 260,
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              /// MERCHANT INFO
+              Text(
+                widget.companyName,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-
-            const SizedBox(height: 24),
-            const Divider(),
-
-            ListTile(
-              leading: const Icon(Icons.phone),
-              title: const Text('Mobile Number'),
-              subtitle: Text(widget.mobile),
-            ),
-
-            ListTile(
-              leading:
-                  const Icon(Icons.account_balance_wallet),
-              title: const Text('UPI ID'),
-              subtitle: Text(_upiId()),
-              trailing: IconButton(
-                icon: const Icon(Icons.copy),
-                onPressed: _copyUpi,
+              const SizedBox(height: 4),
+              Text(
+                widget.merchantName,
+                style: const TextStyle(color: Colors.black54),
               ),
-            ),
 
-            const SizedBox(height: 20),
-            const Text(
-              'Ask customer to scan this QR to pay',
-              style: TextStyle(color: Colors.grey),
-            ),
-          ],
+              const SizedBox(height: 30),
+
+              /// ANIMATED GLOW QR
+              RepaintBoundary(
+                key: _qrKey,
+                child: AnimatedBuilder(
+                  animation: _glowController,
+                  builder: (_, __) {
+                    return Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.blue.withOpacity(
+                                0.3 + _glowController.value * 0.4),
+                            blurRadius:
+                                30 + _glowController.value * 20,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          QrImageView(
+                            data: qrString,
+                            size: 240,
+                            backgroundColor: Colors.white,
+                          ),
+
+                          /// MERCHANT LOGO
+                          Container(
+                            height: 48,
+                            width: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.blue,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 3,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                initials,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 28),
+
+              /// INFO
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(Icons.qr_code_scanner,
+                        color: Colors.blue, size: 26),
+                    SizedBox(height: 8),
+                    Text(
+                      'Scan this QR to pay',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Fast • Secure • Contactless',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

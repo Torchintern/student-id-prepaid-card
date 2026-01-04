@@ -1,9 +1,32 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+import 'dart:io';
+
 
 class ApiService {
   static const String baseUrl = 'http://10.0.2.2:5000';
-  
+ static const Map<String, String> headers = {
+    "Content-Type": "application/json",
+  };
+   // ================= INTERNAL POST HELPER =================
+  static Future<Map<String, dynamic>> _post(
+    String endpoint,
+    Map<String, dynamic> body,
+  ) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl$endpoint'),
+      headers: headers,
+      body: jsonEncode(body),
+    );
+
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    } else {
+      throw Exception('POST $endpoint failed');
+    }
+  }
+
 
   // ================= SEND OTP (LOGIN) =================
   static Future<Map<String, dynamic>> sendOtpLogin(
@@ -153,32 +176,75 @@ static Future<bool> verifyOtpNamed({
       'message': body['message'],
     };
   }
-
-  // ================= MERCHANT PAY (DEBIT WITH PIN) =================
-  static Future<Map<String, dynamic>> merchantPay({
-    required String mobile,
-    required String receiver,
-    required double amount,
-    required String pin,
-  }) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/merchant/pay'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'mobile': mobile,
-        'receiver': receiver,
-        'amount': amount,
-        'pin': pin,
-      }),
+// check wallet payment
+static Future<Map<String, dynamic>> checkWalletPayment({
+  required String merchantMobile,
+  required String createdAt,
+}) async {
+  try {
+    final res = await http.get(
+      Uri.parse(
+        '$baseUrl/wallet/check-payment'
+        '?merchant_mobile=$merchantMobile'
+        '&created_at=$createdAt',
+      ),
     );
 
-    final body = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      return {'status': 'PENDING'};
+    }
 
-    return {
-      'success': res.statusCode == 200,
-      'message': body['message'],
-    };
+    final decoded = jsonDecode(res.body);
+
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+
+    return {'status': 'PENDING'};
+  } catch (e) {
+   
+    debugPrint('checkWalletPayment error: $e');
+    return {'status': 'PENDING'};
   }
+}
+
+
+// ================= MERCHANT PAY (WALLET WITH PIN) =================
+static Future<Map<String, dynamic>> merchantPay({
+  required String mobile,
+  required String receiver,
+  required double amount,
+  required String pin,
+}) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/merchant/wallet/pay'),
+    headers: headers,
+    body: jsonEncode({
+      "mobile": mobile,
+      "receiver": receiver,
+      "amount": amount,
+      "pin": pin,
+    }),
+  );
+
+  return jsonDecode(res.body);
+}
+
+
+// ================= WALLET BALANCE =================
+static Future<double> getWalletBalance(String mobile) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/wallet/balance'),
+    headers: headers,
+    body: jsonEncode({
+      "mobile": mobile,
+    }),
+  );
+
+  final data = jsonDecode(res.body);
+  return (data['balance'] as num).toDouble();
+}
+
 
   // ================= MERCHANT TRANSACTIONS (OLD – KEEP) =================
   static Future<List<dynamic>> getMerchantTransactions(
@@ -314,6 +380,38 @@ static Future<bool> verifyOtpNamed({
     }
     return {'data': {}, 'growth': 0};
   }
+//============= Business Insights Filter ===============
+static Future<Map<String, dynamic>> getCustomInsights({
+  required String mobile,
+  required DateTime start,
+  required DateTime end,
+}) async {
+  final response = await http.post(
+    Uri.parse('$baseUrl/merchant/insights/custom'),
+    headers: {'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'mobile': mobile,
+      'start': start.toIso8601String().substring(0, 10), // yyyy-mm-dd
+      'end': end.toIso8601String().substring(0, 10),
+    }),
+  );
+
+  if (response.statusCode == 200) {
+    return jsonDecode(response.body);
+  } else {
+    throw Exception('Failed to fetch custom insights');
+  }
+}
+// summary insights
+static Future<Map<String, dynamic>> getYesterdaySummary(String mobile) =>
+    _post('/merchant/summary/yesterday', {'mobile': mobile});
+
+static Future<Map<String, dynamic>> getPrevWeekSummary(String mobile) =>
+    _post('/merchant/summary/prev-week', {'mobile': mobile});
+
+static Future<Map<String, dynamic>> getPrevMonthSummary(String mobile) =>
+    _post('/merchant/summary/prev-month', {'mobile': mobile});
+
 
   // ================= BUSINESS INSIGHTS (MONTHLY) =================
   static Future<Map<String, dynamic>> getMonthlyInsights(
@@ -361,118 +459,167 @@ static Future<bool> sendOtp({
   return response.statusCode == 200;
 }
 
-// merchant info
+// ============== Merchant Info Update ===============
 static Future<bool> updateMerchantInfo({
   required String mobile,
   String? email,
-  String? aadhaar,
+  String? dob,
 }) async {
+  final body = {
+    "mobile": mobile,
+  };
+
+  if (email != null) body["email"] = email;
+
+  if (dob != null) {
+    // Enforce yyyy-mm-dd only
+    body["dob"] = dob.split(' ').first;
+  }
+
   final res = await http.post(
     Uri.parse("$baseUrl/merchant/update-info"),
-    headers: {'Content-Type': 'application/json'},
-    body: jsonEncode({
-      "mobile": mobile,
-      if (email != null) "email": email,
-      if (aadhaar != null) "aadhaar": aadhaar,
-    }),
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode(body),
   );
 
   return res.statusCode == 200;
 }
-// ================= BANK (NEW DB-DRIVEN LOGIC) =================
 
-  /// Static list of banks
-  static Future<List<dynamic>> getBanks() async {
-    final res = await http.get(Uri.parse('$baseUrl/banks/list'));
-    return jsonDecode(res.body);
-  }
 
-  /// Check if merchant mobile is linked with selected bank
-  static Future<Map<String, dynamic>> checkBankLinked({
-    required String mobile,
-    required String bankName,
-  }) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/bank/check-linked'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'mobile': mobile,
-        'bank_name': bankName,
-      }),
-    );
-
-    return jsonDecode(res.body);
-  }
-
-  /// Add merchant bank account (after successful check)
-  static Future<bool> addMerchantBank({
-    required String mobile,
-    required String bankName,
-    required String accountNumber,
-    required String ifscCode,
-  }) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/merchant/bank/add'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'mobile': mobile,
-        'bank_name': bankName,
-        'account_number': accountNumber,
-        'ifsc_code': ifscCode,
-      }),
-    );
-
-    return res.statusCode == 200;
-  }
-  // check any bank linked
-static Future<Map<String, dynamic>> checkAnyLinkedBank({
+// check qr payment status
+static Future<String> checkQrPaymentStatus({
   required String mobile,
+  required double amount,
 }) async {
-  final res = await http.post(
-    Uri.parse('$baseUrl/merchant/bank/check-any'),
-    headers: {'Content-Type': 'application/json'},
-    body: jsonEncode({'mobile': mobile}),
-  );
-
-  return jsonDecode(res.body);
-}
-
-// check balance 
-static Future<Map<String, dynamic>> checkMerchantBalance({
-  required String mobile,
-  required String pin,
-  required String bankName,
-}) async {
-  final res = await http.post(
-    Uri.parse('$baseUrl/merchant/bank/balance'),
-    headers: const {'Content-Type': 'application/json'},
-    body: jsonEncode({
-      "mobile": mobile,
-      "pin": pin,
-      "bank_name": bankName, 
-    }),
-  );
-
-  return jsonDecode(res.body);
-}
-
-// ================= LIST MERCHANT BANK ACCOUNTS =================
-static Future<List<dynamic>> listMerchantBanks({
-  required String mobile,
-}) async {
-  final res = await http.post(
-    Uri.parse('$baseUrl/merchant/bank/list'),
-    headers: const {'Content-Type': 'application/json'},
-    body: jsonEncode({
-      'mobile': mobile,
-    }),
+  final res = await http.get(
+    Uri.parse(
+      '$baseUrl/merchant/qr/status?mobile=$mobile&amount=$amount',
+    ),
+    headers: headers,
   );
 
   if (res.statusCode == 200) {
-    return jsonDecode(res.body) as List<dynamic>;
-  } else {
-    return [];
+    final data = jsonDecode(res.body);
+    return data['status']; // PENDING / SUCCESS
   }
+  return 'PENDING';
+}
+
+// get Total rewards
+static Future<double> getTotalRewards(String mobile) async {
+  final uri = Uri.parse("$baseUrl/merchant/rewards/total");
+
+  final res = await http.post(
+    uri,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: jsonEncode({
+      "mobile": mobile,
+    }),
+  );
+
+  if (res.statusCode != 200) {
+    throw Exception("Failed to load rewards");
+  }
+
+  final data = jsonDecode(res.body);
+  return (data['total_rewards'] ?? 0).toDouble();
+}
+
+// get rewards history
+static Future<List<dynamic>> getRewardsHistory(String mobile) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/merchant/rewards/history'),
+    headers: headers,
+    body: jsonEncode({'mobile': mobile}),
+  );
+
+  if (res.statusCode == 200) {
+    return jsonDecode(res.body);
+  }
+  return [];
+}
+// upload gst
+static Future<bool> uploadGst({
+  required String mobile,
+  required String gst,
+  required File file,
+}) async {
+  try {
+    final uri = Uri.parse("$baseUrl/merchant/kyc/gst");
+
+    final request = http.MultipartRequest("POST", uri)
+      ..fields["mobile"] = mobile
+      ..fields["gst_number"] = gst
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          "gst_doc",
+          file.path,
+        ),
+      );
+
+    final response = await request.send();
+
+    return response.statusCode == 200;
+  } catch (e) {
+    debugPrint("uploadGst error: $e");
+    return false;
+  }
+}
+// upload aadhar
+static Future<bool> uploadAadhaar({
+  required String mobile,
+  required String aadhaar,
+  required File front,
+  required File back,
+}) async {
+  try {
+    final uri = Uri.parse("$baseUrl/merchant/kyc/aadhaar");
+
+    final request = http.MultipartRequest("POST", uri)
+      ..fields["mobile"] = mobile
+      ..fields["aadhaar"] = aadhaar
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          "front",
+          front.path,
+        ),
+      )
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          "back",
+          back.path,
+        ),
+      );
+
+    final response = await request.send();
+
+    return response.statusCode == 200;
+  } catch (e) {
+    debugPrint("uploadAadhaar error: $e");
+    return false;
+  }
+}
+// Wallet Transfer
+static Future<Map<String, dynamic>> walletTransfer({
+  required String senderMobile,
+  required String receiver,
+  required double amount,
+  required String pin,
+}) async {
+  final res = await http.post(
+    Uri.parse('$baseUrl/wallet/transfer'),
+    headers: headers,
+    body: jsonEncode({
+      "sender_mobile": senderMobile,
+      "receiver": receiver,
+      "amount": amount,
+      "pin": pin,
+    }),
+  );
+
+  return jsonDecode(res.body);
 }
 
 

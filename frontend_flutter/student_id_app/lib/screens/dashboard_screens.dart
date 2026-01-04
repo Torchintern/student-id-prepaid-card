@@ -2,17 +2,18 @@ import 'package:flutter/material.dart';
 import 'login_screen.dart';
 import '../services/api_service.dart';
 import '../../models/payment_filter.dart';
-import 'merchant/merchant_my_info_screen.dart';
 
+import 'merchant/merchant_my_info_screen.dart';
+import 'merchant/rewards_history_screen.dart';
 import 'merchant/all_payments_screen.dart';
-import 'merchant/qr_code_screen.dart';
+import 'merchant/merchant_wallet_qr_screen.dart';
+import 'merchant/merchant_profile_qr_screen.dart';
 import 'merchant/loans_screen.dart';
 import 'merchant/business_insights_screen.dart';
-import 'merchant/soundpod_screen.dart';
 import 'merchant/support_screen.dart';
-import 'merchant/merchant_profile_qr_screen.dart';
-import 'merchant/add_bank_account_screen.dart';
-import 'merchant/linked_bank_account_screen.dart';
+import 'merchant/settlement_status_screen.dart';
+
+
 import 'admin/student_management_screen.dart';
 import 'admin/merchant_management_screen.dart';
 import 'admin/reward_rules_screen.dart';
@@ -88,6 +89,36 @@ class MerchantDashboard extends StatefulWidget {
 
 class _MerchantDashboardState extends State<MerchantDashboard> {
   int _currentIndex = 0;
+  double totalRewards = 0;
+  @override
+  void initState() {
+    super.initState();
+    _loadTotalRewards();
+  }
+  Future<void> _loadTotalRewards() async {
+  final rewards =
+      await ApiService.getTotalRewards(widget.mobile);
+
+  if (!mounted) return;
+
+  if (rewards > totalRewards && totalRewards != 0) {
+    final diff = rewards - totalRewards;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '🎉 Cashback received: ₹${diff.toStringAsFixed(0)}',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  setState(() {
+    totalRewards = rewards;
+  });
+}
+
 
   void _logout(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -252,22 +283,24 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
             _currentIndex == 0 ? 'Merchant Home' : 'Merchant Profile',
             style: const TextStyle(color: Colors.black),
           ),
-          // ✅ QR ICON ONLY IN PROFILE TAB
+          
           actions: _currentIndex == 1
               ? [
                   IconButton(
                     icon: const Icon(Icons.qr_code, color: Colors.black),
                     onPressed: () {
                       Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => MerchantProfileQrScreen(
-                            merchantName: widget.merchantName,
-                            companyName: widget.companyName,
-                            mobile: widget.mobile,
-                          ),
-                        ),
-                      );
+  context,
+  MaterialPageRoute(
+    builder: (_) => MerchantProfileQrScreen(
+      merchantMobile: widget.mobile,
+      merchantName: widget.merchantName,
+      companyName: widget.companyName,
+    ),
+  ),
+);
+
+
                     },
                   ),
                 ]
@@ -309,7 +342,50 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
           ),
           const SizedBox(height: 12),
           _quickActions(),
+          const SizedBox(height: 16),
+          _totalRewardsCard(),
         ],
+      ),
+    );
+  }
+// TOTAL REWARDS CARD
+  Widget _totalRewardsCard() {
+  return GestureDetector(
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => RewardsHistoryScreen(
+            mobile: widget.mobile,
+          ),
+        ),
+      );
+    },
+    child: Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+                const Text(
+                  'Total Rewards',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '₹${totalRewards.toStringAsFixed(0)}',
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+
+        ),
       ),
     );
   }
@@ -364,66 +440,49 @@ class _MerchantDashboardState extends State<MerchantDashboard> {
   ),
 ),
 
+      Card (
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+  child:ListTile(
+  leading: const Icon(Icons.card_giftcard, color: Colors.amber),
+  title: const Text('My Rewards'),
+  subtitle: const Text('View cashback rewards'),
+  trailing: const Icon(Icons.chevron_right),
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RewardsHistoryScreen(
+          mobile: widget.mobile,
+        ),
+      ),
+    );
+  },
+),
+),
 Card(
   shape: RoundedRectangleBorder(
     borderRadius: BorderRadius.circular(14),
   ),
   child: ListTile(
-    leading: const Icon(Icons.account_balance),
-    title: const Text('Bank Account'),
-    subtitle: const Text('Add / Update Bank Account'),
-    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-
-   onTap: () async {
-  final result = await ApiService.checkAnyLinkedBank(
-    mobile: widget.mobile,
-  );
-
-  if (!context.mounted) return;
-
-  // 🔍 DEBUG (TEMPORARY – REMOVE AFTER CONFIRMATION)
-  debugPrint('CHECK ANY BANK RESULT: $result');
-
-  // ================= ANY BANK LINKED =================
-  if (result['linked'] == true) {
-    final account = result['account'] ?? {};
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => LinkedBankAccountScreen(
-          bankName: account['bank_name']?.toString() ?? '-',
-          accountHolderName:
-              account['account_holder_name']?.toString() ?? '-',
-          accountNumber:
-              account['account_number']?.toString() ?? '-',
-          ifscCode:
-              account['ifsc_code']?.toString() ?? '-',
-          merchantMobile: widget.mobile,
-          merchantName: widget.merchantName,
-          companyName: widget.companyName,
+    leading: const Icon(
+      Icons.account_balance_wallet,
+      color: Colors.green,
+    ),
+    title: const Text('Wallet'),
+    subtitle: const Text('Wallet setup coming soon'),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: () {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Wallet feature will be enabled soon'),
         ),
-      ),
-    );
-  }
-
-  // ================= NO BANK LINKED =================
-  else {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AddBankAccountScreen(
-          merchantMobile: widget.mobile,
-          merchantName: widget.merchantName,
-          companyName: widget.companyName,
-        ),
-      ),
-    );
-  }
-},
-
+      );
+    },
   ),
 ),
+
+
+
 
           const Spacer(),
           ElevatedButton.icon(
@@ -551,7 +610,7 @@ Widget _collectionCard({
       _action(Icons.qr_code, "QR Code"),
       _action(Icons.account_balance, "Loans"),
       _action(Icons.insights, "Business Insights"),
-      _action(Icons.speaker, "SoundPod"),
+      _action(Icons.account_balance_wallet, "Settlement Status"),
       _action(Icons.support_agent, "Support"),
     ];
 
@@ -580,11 +639,13 @@ Widget _collectionCard({
             );
             break;
           case 'QR Code':
-            screen = QRCodeScreen(
-              merchantMobile: widget.mobile,
-              merchantName: widget.merchantName,
-            );
-            break;
+  screen = MerchantWalletQrScreen(
+    merchantMobile: widget.mobile,
+    merchantName: widget.merchantName,
+    companyName: widget.companyName,
+  );
+  break;
+
           case 'Loans':
             screen = const LoansScreen();
             break;
@@ -593,9 +654,12 @@ Widget _collectionCard({
               merchantMobile: widget.mobile,
             );
             break;
-          case 'SoundPod':
-            screen = const SoundPodScreen();
-            break;
+          case 'Settlement Status':
+  screen = SettlementStatusScreen(
+    merchantMobile: widget.mobile,
+  );
+  break;
+
           default:
             screen = SupportScreen();
         }
@@ -673,9 +737,9 @@ class AdminDashboard extends StatelessWidget {
   Widget _adminStats() {
     return Row(
       children: const [
-        _StatCard("Active Cards", "1,245", Icons.credit_card),
-        _StatCard("Transactions", "18,390", Icons.swap_horiz),
-        _StatCard("Rewards Issued", "₹45K", Icons.card_giftcard),
+        _StatCard("Active Cards", "0", Icons.credit_card),
+        _StatCard("Transactions", "0", Icons.swap_horiz),
+        _StatCard("Rewards Issued", "₹0", Icons.card_giftcard),
       ],
     );
   }
